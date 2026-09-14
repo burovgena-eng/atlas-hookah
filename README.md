@@ -22,6 +22,32 @@
 | 🔔 **Уведомления** | Адресные и широковещательные, таргетинг по городу/филиалу, статусы прочтения |
 | 🛡 **Безопасность** | Rate limiting (логин/регистрация/уведомления/загрузки), защита от path traversal, CSRF-модуль, журналирование событий безопасности, санитизация и валидация всех входных данных |
 
+## 📸 Скриншоты
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/dashboard.png" alt="Дашборд руководителя" /></td>
+    <td><img src="docs/screenshots/mixes.png" alt="Миксы сотрудников" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/clients.png" alt="CRM постоянных клиентов" /></td>
+    <td><img src="docs/screenshots/knowledge.png" alt="База знаний" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/recipes.png" alt="Рецептуры" /></td>
+    <td><img src="docs/screenshots/manage-users.png" alt="Управление сотрудниками" /></td>
+  </tr>
+</table>
+
+<details>
+<summary>Ещё скриншоты</summary>
+
+| Вход | Центр безопасности | Уведомления |
+|---|---|---|
+| ![Вход](docs/screenshots/login.png) | ![Безопасность](docs/screenshots/security.png) | ![Уведомления](docs/screenshots/notifications.png) |
+
+</details>
+
 ## 🛠 Стек
 
 - **Next.js 16** (App Router, Turbopack, standalone output) + **React 19**
