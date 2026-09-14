@@ -368,7 +368,7 @@ export function LoginPage() {
         </Card>
 
         <p className="text-center text-slate-500 text-sm mt-6">
-          © 2024 Atlas Hookah. Все права защищены.
+          © {new Date().getFullYear()} Atlas Hookah. Все права защищены.
         </p>
       </div>
     </div>

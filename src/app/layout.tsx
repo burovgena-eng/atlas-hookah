@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   description:
     "Платформа для кальянных мастеров сети Atlas. Управление миксами, база знаний, заметки по клиентам.",
   keywords: ["Atlas", "Hookah", "Кальян", "Кальянная", "Миксы"],
-  authors: [{ name: "Atlas Team" }],
+  authors: [{ name: "burovgena-eng", url: "https://github.com/burovgena-eng" }],
   openGraph: {
     title: "Atlas Hookah",
     description:

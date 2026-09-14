@@ -426,7 +426,7 @@ function MainAppContent() {
           {/* Desktop Footer */}
           <footer className="h-12 border-t border-slate-700 bg-slate-800/30 flex items-center justify-center px-6 flex-shrink-0">
             <p className="text-sm text-slate-500">
-              © 2024 Atlas Hookah. Все права защищены.
+              © {new Date().getFullYear()} Atlas Hookah. Все права защищены.
             </p>
           </footer>
         </main>
