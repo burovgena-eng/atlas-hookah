@@ -1,12 +1,20 @@
 // API для управления типами контейнеров
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
+import { validateId, validateString, validateNumber, MAX_LENGTHS, isObject } from '@/lib/validation';
 
-// Получить все типы контейнеров
+// Получить все типы контейнеров (требуется авторизация)
 export async function GET(request: NextRequest) {
   try {
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
-    const containerId = searchParams.get('id');
+    const containerId = validateId(searchParams.get('id'));
 
     if (containerId) {
       // Получить конкретный контейнер
@@ -39,21 +47,42 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Создать новый тип контейнера
+// Создать новый тип контейнера (только руководитель/старший мастер)
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { name, weight, description } = body;
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
 
-    // Валидация
-    if (!name || name.trim().length < 2) {
+    if (actor.role !== 'MANAGER' && actor.role !== 'SENIOR_MASTER') {
+      return NextResponse.json({ error: 'Недостаточно прав' }, { status: 403 });
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Некорректный формат запроса' }, { status: 400 });
+    }
+
+    if (!isObject(body)) {
+      return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
+    }
+
+    const name = validateRequiredStringName(body.name);
+    const weight = validateNumber(body.weight, 0.1, 1000000);
+    const description = validateString(body.description, MAX_LENGTHS.description);
+
+    if (!name) {
       return NextResponse.json(
         { error: 'Название должно содержать минимум 2 символа' },
         { status: 400 }
       );
     }
 
-    if (!weight || weight <= 0) {
+    if (weight === null) {
       return NextResponse.json(
         { error: 'Вес должен быть больше 0' },
         { status: 400 }
@@ -74,9 +103,9 @@ export async function POST(request: NextRequest) {
 
     const container = await db.containerType.create({
       data: {
-        name: name.trim(),
-        weight: parseFloat(weight),
-        description: description?.trim() || null,
+        name,
+        weight,
+        description: description || null,
       },
     });
 
@@ -90,13 +119,34 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Обновить тип контейнера
+// Обновить тип контейнера (только руководитель/старший мастер)
 export async function PUT(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { id, name, weight, description } = body;
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
 
-    if (!id) {
+    if (actor.role !== 'MANAGER' && actor.role !== 'SENIOR_MASTER') {
+      return NextResponse.json({ error: 'Недостаточно прав' }, { status: 403 });
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Некорректный формат запроса' }, { status: 400 });
+    }
+
+    if (!isObject(body)) {
+      return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
+    }
+
+    const { id, name, weight, description } = body;
+    const validatedId = validateId(id);
+
+    if (!validatedId) {
       return NextResponse.json(
         { error: 'ID контейнера обязателен' },
         { status: 400 }
@@ -105,7 +155,7 @@ export async function PUT(request: NextRequest) {
 
     // Проверяем существование
     const existing = await db.containerType.findUnique({
-      where: { id },
+      where: { id: validatedId },
     });
 
     if (!existing) {
@@ -116,14 +166,16 @@ export async function PUT(request: NextRequest) {
     }
 
     // Валидация
-    if (name && name.trim().length < 2) {
+    const validatedName = name !== undefined ? validateRequiredStringName(name) : null;
+    if (name !== undefined && !validatedName) {
       return NextResponse.json(
         { error: 'Название должно содержать минимум 2 символа' },
         { status: 400 }
       );
     }
 
-    if (weight !== undefined && weight <= 0) {
+    const validatedWeight = weight !== undefined ? validateNumber(weight, 0.1, 1000000) : undefined;
+    if (weight !== undefined && validatedWeight === null) {
       return NextResponse.json(
         { error: 'Вес должен быть больше 0' },
         { status: 400 }
@@ -131,11 +183,11 @@ export async function PUT(request: NextRequest) {
     }
 
     // Проверяем уникальность названия (если меняем)
-    if (name && name.trim() !== existing.name) {
+    if (validatedName && validatedName !== existing.name) {
       const duplicate = await db.containerType.findFirst({
         where: { 
-          name: name.trim(),
-          id: { not: id },
+          name: validatedName,
+          id: { not: validatedId },
         },
       });
 
@@ -148,11 +200,11 @@ export async function PUT(request: NextRequest) {
     }
 
     const container = await db.containerType.update({
-      where: { id },
+      where: { id: validatedId },
       data: {
-        name: name?.trim() || existing.name,
-        weight: weight !== undefined ? parseFloat(weight) : existing.weight,
-        description: description !== undefined ? (description?.trim() || null) : existing.description,
+        name: validatedName || existing.name,
+        weight: validatedWeight ?? existing.weight,
+        description: description !== undefined ? (validateString(description, MAX_LENGTHS.description) || null) : existing.description,
       },
     });
 
@@ -166,11 +218,21 @@ export async function PUT(request: NextRequest) {
   }
 }
 
-// Удалить тип контейнера
+// Удалить тип контейнера (только руководитель/старший мастер)
 export async function DELETE(request: NextRequest) {
   try {
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
+
+    if (actor.role !== 'MANAGER' && actor.role !== 'SENIOR_MASTER') {
+      return NextResponse.json({ error: 'Недостаточно прав' }, { status: 403 });
+    }
+
     const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+    const id = validateId(searchParams.get('id'));
 
     if (!id) {
       return NextResponse.json(
@@ -179,7 +241,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Удаляем контейнер (связи в inventoryContainerItem станут null благодаря SetNull)
+    // Удаляем контейнер (связи в инвентаризации получают SetNull)
     await db.containerType.delete({
       where: { id },
     });
@@ -192,4 +254,12 @@ export async function DELETE(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+// Вспомогательная валидация названия контейнера
+function validateRequiredStringName(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length < 2 || trimmed.length > 100) return null;
+  return trimmed;
 }

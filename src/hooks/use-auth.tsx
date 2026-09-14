@@ -19,6 +19,9 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 // Интервал проверки сессии (в мс)
 const SESSION_CHECK_INTERVAL = 15000; // 15 секунд
 
+const TOKEN_KEY = 'atlas_token';
+const USER_KEY = 'atlas_user';
+
 // Безопасная проверка доступности localStorage
 function isLocalStorageAvailable(): boolean {
   try {
@@ -53,6 +56,40 @@ const safeLocalStorage = {
   },
 };
 
+// Глобальный интерцептор fetch: добавляет X-Session-Token ко всем API-запросам.
+// Устанавливается один раз, обрабатывает и строковые URL, и объекты Request.
+function installFetchInterceptor() {
+  const w = window as typeof window & { __atlasFetchPatched?: boolean };
+  if (w.__atlasFetchPatched) return;
+  w.__atlasFetchPatched = true;
+
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    try {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      const isApiCall = url.startsWith('/api/') || url.includes(`${window.location.origin}/api/`);
+      const token = safeLocalStorage.getItem(TOKEN_KEY);
+
+      if (isApiCall && token) {
+        const headers = new Headers(init?.headers || (typeof input !== 'string' && !(input instanceof URL) ? input.headers : undefined));
+        if (!headers.has('X-Session-Token')) {
+          headers.set('X-Session-Token', token);
+        }
+        return originalFetch(input, { ...init, headers });
+      }
+    } catch {
+      // Не прерываем выполнение запроса при ошибке интерцептора
+    }
+    return originalFetch(input, init);
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   // Начинаем с null и синхронизируем после монтирования
   const [user, setUser] = useState<User | null>(null);
@@ -65,7 +102,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (initRef.current) return;
     initRef.current = true;
 
-    const savedUser = safeLocalStorage.getItem('atlas_user');
+    installFetchInterceptor();
+
+    const savedUser = safeLocalStorage.getItem(USER_KEY);
     if (savedUser) {
       try {
         const parsedUser = JSON.parse(savedUser);
@@ -76,7 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }, 0);
         return;
       } catch {
-        safeLocalStorage.removeItem('atlas_user');
+        safeLocalStorage.removeItem(USER_KEY);
       }
     }
     // Используем setTimeout чтобы избежать синхронный setState
@@ -85,7 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, 0);
   }, []);
 
-  // Периодическая проверка валидности сессии
+  // Периодическая проверка валидности сессии (по серверному токену)
   useEffect(() => {
     if (!user) return;
 
@@ -94,11 +133,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const validateSession = async () => {
       try {
-        // Отправляем текущую роль и имя для проверки изменений
+        // Отправляем текущие публичные данные для проверки изменений на сервере
         const params = new URLSearchParams({
-          userId: user.id,
           role: user.role,
           name: user.name,
+          avatar: user.avatar || '',
         });
 
         const response = await fetch(`/api/auth/validate?${params.toString()}`, {
@@ -112,21 +151,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.log('Session invalidated:', data.reason);
           // Мгновенная деавторизация
           setUser(null);
-          safeLocalStorage.removeItem('atlas_user');
+          safeLocalStorage.removeItem(USER_KEY);
+          safeLocalStorage.removeItem(TOKEN_KEY);
           setCurrentSection('dashboard');
           return;
         }
 
-        // Если данные пользователя изменились (роль, имя и т.д.)
+        // Если данные пользователя изменились (роль, имя, аватар) —
+        // мерджим обновлённые поля в локальную копию (персональные данные
+        // приходят только из login/profile, не из validate)
         if (data.userUpdated && data.user) {
+          const updated: User = {
+            ...user,
+            name: data.user.name,
+            avatar: data.user.avatar,
+            role: data.user.role,
+            isApproved: data.user.isApproved,
+            city: data.user.city,
+            branch: data.user.branch,
+          };
           console.log('User data updated:', data.changes);
-          // Обновляем пользователя в состоянии и localStorage
-          setUser(data.user);
-          safeLocalStorage.setItem('atlas_user', JSON.stringify(data.user));
+          setUser(updated);
+          safeLocalStorage.setItem(USER_KEY, JSON.stringify(updated));
 
-          // Если изменилась роль, можно показать уведомление
           if (data.changes?.roleChanged) {
-            console.log(`Role changed from ${user.role} to ${data.user.role}`);
+            console.log(`Role changed to ${data.user.role}`);
           }
         }
       } catch (error) {
@@ -148,7 +197,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       controller.abort();
       clearInterval(interval);
     };
-  }, [user?.id, user?.role, user?.name]); // Зависимость от id, role и name
+  }, [user?.id, user?.role, user?.name, user?.avatar]); // Зависимости публичных полей
 
   const login = useCallback(async (email: string, password: string) => {
     try {
@@ -165,7 +214,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setUser(data.user);
-      safeLocalStorage.setItem('atlas_user', JSON.stringify(data.user));
+      safeLocalStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      if (data.token) {
+        safeLocalStorage.setItem(TOKEN_KEY, data.token);
+      }
       return { success: true };
     } catch {
       return { success: false, error: 'Ошибка при входе' };
@@ -190,11 +242,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Все остальные требуют подтверждения
       if (data.isFirstManager) {
         setUser(data.user);
-        safeLocalStorage.setItem('atlas_user', JSON.stringify(data.user));
+        safeLocalStorage.setItem(USER_KEY, JSON.stringify(data.user));
+        if (data.token) {
+          safeLocalStorage.setItem(TOKEN_KEY, data.token);
+        }
       }
 
-      return { 
-        success: true, 
+      return {
+        success: true,
         isFirstManager: data.isFirstManager,
         needsApproval: data.needsApproval,
       };
@@ -204,14 +259,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    // Инвалидируем серверную сессию (токен добавит интерцептор)
+    fetch('/api/auth', { method: 'DELETE' }).catch(() => {});
     setUser(null);
-    safeLocalStorage.removeItem('atlas_user');
+    safeLocalStorage.removeItem(USER_KEY);
+    safeLocalStorage.removeItem(TOKEN_KEY);
     setCurrentSection('dashboard');
   }, []);
 
   const updateUser = useCallback((updatedUser: User) => {
     setUser(updatedUser);
-    safeLocalStorage.setItem('atlas_user', JSON.stringify(updatedUser));
+    safeLocalStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
   }, []);
 
   const value = useMemo(() => ({

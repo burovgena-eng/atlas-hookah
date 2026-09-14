@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
 import { 
   validateId, 
   validateRequiredString, 
@@ -9,6 +10,7 @@ import {
   MAX_LENGTHS,
   isObject,
 } from '@/lib/validation';
+import { rateLimitMiddleware } from '@/lib/rate-limit';
 
 // Получить рецепты
 export async function GET(request: NextRequest) {
@@ -51,25 +53,27 @@ export async function POST(request: NextRequest) {
       bowlType, 
       tips, 
       imageUrl,
-      ingredients,
-      authorId 
+      ingredients
     } = body;
 
-    const validatedAuthorId = validateId(authorId);
-    const validatedName = validateRequiredString(name, MAX_LENGTHS.title);
-    const validatedInstructions = validateRequiredString(instructions, MAX_LENGTHS.instructions);
-    
-    if (!validatedAuthorId) {
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
+
+    const limited = rateLimitMiddleware(request, 'notifications', actor.id);
+    if (limited) return limited;
+
+    const validatedName = validateRequiredString(name, MAX_LENGTHS.title);
+    const validatedInstructions = validateRequiredString(instructions, MAX_LENGTHS.instructions);
 
     if (!validatedName || !validatedInstructions) {
       return NextResponse.json({ error: 'Название и инструкция обязательны' }, { status: 400 });
     }
 
     // Проверяем права - только MANAGER может создавать рецепты
-    const user = await db.user.findUnique({ where: { id: validatedAuthorId } });
-    if (user?.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководители могут создавать рецепты' }, { status: 403 });
     }
 
@@ -84,7 +88,7 @@ export async function POST(request: NextRequest) {
         bowlType: validateString(bowlType, MAX_LENGTHS.bowlType),
         tips: validateString(tips, MAX_LENGTHS.tips),
         imageUrl: validateUrl(imageUrl),
-        authorId: validatedAuthorId,
+        authorId: actor.id,
         ingredients: validatedIngredients && validatedIngredients.length > 0 
           ? {
               create: validatedIngredients.map((ing) => ({
@@ -110,7 +114,7 @@ export async function POST(request: NextRequest) {
         type: 'RECIPE_ADDED',
         title: 'Новый рецепт добавлен',
         content: `Добавлен новый авторский рецепт: "${validatedName}"\n\n${validateString(description, MAX_LENGTHS.description) || 'Проверьте раздел "Рецептуры" для подробностей.'}`,
-        authorId: validatedAuthorId,
+        authorId: actor.id,
         recipeId: recipe.id,
         recipeName: validatedName,
         recipientId: null, // Всем
@@ -146,20 +150,23 @@ export async function PUT(request: NextRequest) {
       bowlType, 
       tips,
       imageUrl,
-      ingredients,
-      userId 
+      ingredients
     } = body;
 
     const validatedId = validateId(id);
-    const validatedUserId = validateId(userId);
-    
-    if (!validatedId || !validatedUserId) {
-      return NextResponse.json({ error: 'ID рецепта и пользователь обязательны' }, { status: 400 });
+
+    if (!validatedId) {
+      return NextResponse.json({ error: 'ID рецепта обязателен' }, { status: 400 });
+    }
+
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
     // Проверяем права - только MANAGER может редактировать рецепты
-    const user = await db.user.findUnique({ where: { id: validatedUserId } });
-    if (user?.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководители могут редактировать рецепты' }, { status: 403 });
     }
 
@@ -207,7 +214,7 @@ export async function PUT(request: NextRequest) {
         type: 'RECIPE_UPDATED',
         title: 'Рецепт обновлен',
         content: `Рецепт "${validatedName || 'Рецепт'}" был обновлен.\n\nПроверьте раздел "Рецептуры" для просмотра изменений.`,
-        authorId: validatedUserId,
+        authorId: actor.id,
         recipeId: recipe.id,
         recipeName: validatedName || '',
         recipientId: null, // Всем
@@ -226,15 +233,19 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const id = validateId(searchParams.get('id'));
-    const userId = validateId(searchParams.get('userId'));
 
-    if (!id || !userId) {
-      return NextResponse.json({ error: 'ID рецепта и пользователь обязательны' }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: 'ID рецепта обязателен' }, { status: 400 });
+    }
+
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
     // Проверяем права - только MANAGER может удалять рецепты
-    const user = await db.user.findUnique({ where: { id: userId } });
-    if (user?.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководители могут удалять рецепты' }, { status: 403 });
     }
 
@@ -252,7 +263,7 @@ export async function DELETE(request: NextRequest) {
           type: 'RECIPE_DELETED',
           title: 'Рецепт удален',
           content: `Рецепт "${recipe.name}" был удален из базы рецептур.`,
-          authorId: userId,
+          authorId: actor.id,
           recipeId: null,
           recipeName: recipe.name,
           recipientId: null, // Всем

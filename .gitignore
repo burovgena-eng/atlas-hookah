@@ -51,7 +51,7 @@ prisma/*.db-journal
 *.sqlite
 *.sqlite3
 
-# user uploads (runtime-generated)
+logs/backups/# user uploads (runtime-generated)
 /upload/
 /public/upload/
 

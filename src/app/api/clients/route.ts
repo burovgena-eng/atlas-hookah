@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
 import { 
   validateId, 
   validateRequiredString, 
   validateString, 
   validatePhone, 
   validateBoolean,
+  validateDate,
   MAX_LENGTHS,
   isObject,
 } from '@/lib/validation';
@@ -13,26 +15,27 @@ import {
 // Получить заметки по клиентам (все публичные + свои личные)
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const masterId = validateId(searchParams.get('masterId'));
-    const type = validateString(searchParams.get('type'), 20); // 'all', 'my', 'public'
-
-    if (!masterId) {
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
+
+    const { searchParams } = new URL(request.url);
+    const type = validateString(searchParams.get('type'), 20); // 'all', 'my', 'public'
 
     let clients;
 
     if (type === 'my') {
       // Только мои клиенты (личные и публичные)
       clients = await db.clientNote.findMany({
-        where: { masterId },
+        where: { masterId: user.id },
         include: {
           master: {
             select: { id: true, name: true, email: true, role: true },
           },
           masterNotes: {
-            where: { masterId },
+            where: { masterId: user.id },
             select: { id: true, notes: true, createdAt: true, updatedAt: true },
           },
         },
@@ -43,14 +46,14 @@ export async function GET(request: NextRequest) {
       clients = await db.clientNote.findMany({
         where: {
           isPublic: true,
-          NOT: { masterId }, // Исключаем свои
+          NOT: { masterId: user.id }, // Исключаем свои
         },
         include: {
           master: {
             select: { id: true, name: true, email: true, role: true },
           },
           masterNotes: {
-            where: { masterId },
+            where: { masterId: user.id },
             select: { id: true, notes: true, createdAt: true, updatedAt: true },
           },
         },
@@ -61,7 +64,7 @@ export async function GET(request: NextRequest) {
       clients = await db.clientNote.findMany({
         where: {
           OR: [
-            { masterId }, // Свои
+            { masterId: user.id }, // Свои
             { isPublic: true }, // Публичные
           ],
         },
@@ -70,7 +73,7 @@ export async function GET(request: NextRequest) {
             select: { id: true, name: true, email: true, role: true },
           },
           masterNotes: {
-            where: { masterId },
+            where: { masterId: user.id },
             select: { id: true, notes: true, createdAt: true, updatedAt: true },
           },
         },
@@ -107,7 +110,6 @@ export async function POST(request: NextRequest) {
     }
     
     const { 
-      masterId, 
       clientName, 
       clientPhone, 
       preferences, 
@@ -119,30 +121,22 @@ export async function POST(request: NextRequest) {
       isPublic 
     } = body;
 
-    const validatedMasterId = validateId(masterId);
-    const validatedClientName = validateRequiredString(clientName, MAX_LENGTHS.clientName);
-    const validatedPublicNotes = validateRequiredString(publicNotes, MAX_LENGTHS.notes);
-    
-    if (!validatedMasterId) {
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
+    const validatedClientName = validateRequiredString(clientName, MAX_LENGTHS.clientName);
+    const validatedPublicNotes = validateRequiredString(publicNotes, MAX_LENGTHS.notes);
+    
     if (!validatedClientName || !validatedPublicNotes) {
       return NextResponse.json({ error: 'Обязательные поля должны быть заполнены' }, { status: 400 });
     }
 
-    // Проверяем существование и статус пользователя
-    const user = await db.user.findUnique({
-      where: { id: validatedMasterId, deletedAt: null, isApproved: true },
-    });
-
-    if (!user) {
-      return NextResponse.json({ error: 'Пользователь не найден или не авторизован' }, { status: 401 });
-    }
-
     const client = await db.clientNote.create({
       data: {
-        masterId: validatedMasterId,
+        masterId: user.id,
         clientName: validatedClientName,
         clientPhone: validatePhone(clientPhone),
         preferences: validateString(preferences, MAX_LENGTHS.preferences),
@@ -183,7 +177,6 @@ export async function PUT(request: NextRequest) {
     
     const { 
       id, 
-      masterId, 
       clientName, 
       clientPhone, 
       preferences, 
@@ -198,18 +191,23 @@ export async function PUT(request: NextRequest) {
     } = body;
 
     const validatedId = validateId(id);
-    const validatedMasterId = validateId(masterId);
-    
-    if (!validatedId || !validatedMasterId) {
-      return NextResponse.json({ error: 'ID и мастер обязательны' }, { status: 400 });
+
+    if (!validatedId) {
+      return NextResponse.json({ error: 'ID заметки обязателен' }, { status: 400 });
     }
 
-    // Проверяем права - только автор может редактировать
+    // Актор только из серверной сессии - только автор может редактировать
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
+
+    // Проверяем права
     const existingClient = await db.clientNote.findUnique({
       where: { id: validatedId },
     });
 
-    if (!existingClient || existingClient.masterId !== validatedMasterId) {
+    if (!existingClient || existingClient.masterId !== user.id) {
       return NextResponse.json({ error: 'Заметка не найдена или нет прав на редактирование' }, { status: 403 });
     }
 
@@ -231,7 +229,7 @@ export async function PUT(request: NextRequest) {
         firstVisitBranch: firstVisitBranch !== undefined ? validateString(firstVisitBranch, MAX_LENGTHS.branch) : existingClient.firstVisitBranch,
         isPublic: isPublic !== undefined ? validateBoolean(isPublic) : existingClient.isPublic,
         visitCount: validatedVisitCount,
-        lastVisit: lastVisit ? new Date(lastVisit) : existingClient.lastVisit,
+        lastVisit: lastVisit !== undefined && lastVisit !== null ? validateDate(lastVisit) : existingClient.lastVisit,
       },
       include: {
         master: {
@@ -252,10 +250,15 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const id = validateId(searchParams.get('id'));
-    const masterId = validateId(searchParams.get('masterId'));
 
-    if (!id || !masterId) {
-      return NextResponse.json({ error: 'ID и мастер обязательны' }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: 'ID заметки обязателен' }, { status: 400 });
+    }
+
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
     // Проверяем права
@@ -263,7 +266,7 @@ export async function DELETE(request: NextRequest) {
       where: { id },
     });
 
-    if (!existingClient || existingClient.masterId !== masterId) {
+    if (!existingClient || existingClient.masterId !== user.id) {
       return NextResponse.json({ error: 'Заметка не найдена или нет прав на удаление' }, { status: 403 });
     }
 

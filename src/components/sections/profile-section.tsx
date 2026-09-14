@@ -450,6 +450,8 @@ export function ProfileSection() {
               setFormData={setFormData}
               isLoading={isLoading}
               handleSubmit={handleSubmit}
+              handleAvatarUpload={handleAvatarUpload}
+              isUploading={isUploading}
             />
           </TabsContent>
 

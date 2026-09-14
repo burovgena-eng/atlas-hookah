@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
-import { db } from '@/lib/db';
-import { validateId } from '@/lib/validation';
+import { getAuthUser } from '@/lib/auth';
+import { rateLimitMiddleware } from '@/lib/rate-limit';
 
 // Создать директорию если не существует
 async function ensureDir(dir: string) {
@@ -15,6 +15,15 @@ async function ensureDir(dir: string) {
 // Загрузка изображения
 export async function POST(request: NextRequest) {
   try {
+    // Актор только из серверной сессии + rate limit
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
+
+    const limited = rateLimitMiddleware(request, 'upload', user.id);
+    if (limited) return limited;
+
     let formData;
     try {
       formData = await request.formData();
@@ -24,21 +33,6 @@ export async function POST(request: NextRequest) {
     
     const file = formData.get('file');
     const type = (formData.get('type') as string) || 'general'; // avatar, recipe, knowledge, general
-    const userId = validateId(formData.get('userId'));
-
-    // Проверка авторизации - только авторизованные пользователи могут загружать файлы
-    if (!userId) {
-      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
-    }
-
-    // Проверяем существование пользователя
-    const user = await db.user.findUnique({
-      where: { id: userId, deletedAt: null, isApproved: true },
-    });
-
-    if (!user) {
-      return NextResponse.json({ error: 'Пользователь не найден или не авторизован' }, { status: 401 });
-    }
 
     // Проверяем что file существует и является File объектом
     if (!file || !(file instanceof File)) {

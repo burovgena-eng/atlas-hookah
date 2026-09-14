@@ -8,6 +8,11 @@ import path from 'path';
 
 const execAsync = promisify(exec);
 
+// Защита от path traversal: имя файла бэкапа — только безопасные символы
+function isSafeBackupFilename(filename: string): boolean {
+  return /^[a-zA-Z0-9._-]+$/.test(filename) && !filename.includes('..');
+}
+
 // Настройки бэкапа
 const BACKUP_CONFIG = {
   // Директория для бэкапов
@@ -97,6 +102,11 @@ export async function restoreBackup(
   filename: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    // Защита от path traversal
+    if (!isSafeBackupFilename(filename)) {
+      return { success: false, error: 'Недопустимое имя файла бэкапа' };
+    }
+
     const backupPath = path.join(BACKUP_CONFIG.backupDir, filename);
 
     if (!existsSync(backupPath)) {
@@ -205,6 +215,11 @@ export async function deleteBackup(
   filename: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    // Защита от path traversal
+    if (!isSafeBackupFilename(filename)) {
+      return { success: false, error: 'Недопустимое имя файла бэкапа' };
+    }
+
     const backupPath = path.join(BACKUP_CONFIG.backupDir, filename);
 
     if (!existsSync(backupPath)) {

@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { Prisma } from '@prisma/client';
+import { getAuthUser } from '@/lib/auth';
+import { validateId } from '@/lib/validation';
+import { Prisma, CategoryVisibility } from '@prisma/client';
 
 // Получить категории
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const parentId = searchParams.get('parentId');
-    const userId = searchParams.get('userId');
 
-    // Получаем пользователя для проверки роли
-    const user = userId ? await db.user.findUnique({ where: { id: userId } }) : null;
+    // Роль берём из серверной сессии; без сессии видны только общие категории
+    const user = await getAuthUser(request);
 
     // Базовый фильтр для видимости
-    let visibilityFilter: Prisma.CategoryVisibility[] = ['COMMON'];
+    let visibilityFilter: CategoryVisibility[] = ['COMMON'];
     
     if (user?.role === 'MANAGER') {
       // Руководитель видит все категории
@@ -67,17 +68,21 @@ export async function POST(request: NextRequest) {
       color, 
       visibility, 
       parentCategoryId,
-      authorId,
       sendNotification 
     } = body;
 
-    if (!name || !authorId) {
-      return NextResponse.json({ error: 'Название и автор обязательны' }, { status: 400 });
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
+
+    if (!name) {
+      return NextResponse.json({ error: 'Название обязательно' }, { status: 400 });
     }
 
     // Проверяем права - только руководитель может создавать категории
-    const user = await db.user.findUnique({ where: { id: authorId } });
-    if (user?.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководитель может создавать категории' }, { status: 403 });
     }
 
@@ -132,7 +137,7 @@ export async function POST(request: NextRequest) {
           type: 'CATEGORY_ADDED',
           title: 'Добавлена новая категория',
           content: `Создана категория "${name}"${description ? `: ${description}` : ''}`,
-          authorId,
+          authorId: actor.id,
           recipientId: null, // Всем
           city: recipientCity,
           branch: recipientBranch,
@@ -159,17 +164,21 @@ export async function PUT(request: NextRequest) {
       description, 
       color, 
       visibility, 
-      sortOrder,
-      userId 
+      sortOrder
     } = body;
 
-    if (!id || !userId) {
-      return NextResponse.json({ error: 'ID категории и пользователь обязательны' }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: 'ID категории обязателен' }, { status: 400 });
+    }
+
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
     // Проверяем права
-    const user = await db.user.findUnique({ where: { id: userId } });
-    if (user?.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководитель может редактировать категории' }, { status: 403 });
     }
 
@@ -231,13 +240,11 @@ export async function PUT(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-    const userId = searchParams.get('userId');
+    const id = validateId(searchParams.get('id'));
     const forceDelete = searchParams.get('forceDelete') === 'true';
     
     // Для уведомлений читаем тело запроса если есть
     let sendNotification = false;
-    let authorId = userId;
     
     // Пытаемся прочитать тело если передан content-length
     const contentLength = request.headers.get('content-length');
@@ -245,19 +252,23 @@ export async function DELETE(request: NextRequest) {
       try {
         const body = await request.json();
         sendNotification = body.sendNotification === true;
-        authorId = body.authorId || userId;
       } catch {
         // Игнорируем ошибки парсинга тела
       }
     }
 
-    if (!id || !authorId) {
-      return NextResponse.json({ error: 'ID категории и пользователь обязательны' }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: 'ID категории обязателен' }, { status: 400 });
+    }
+
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
     // Проверяем права
-    const user = await db.user.findUnique({ where: { id: authorId } });
-    if (user?.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководитель может удалять категории' }, { status: 403 });
     }
 
@@ -307,7 +318,7 @@ export async function DELETE(request: NextRequest) {
           type: 'CATEGORY_DELETED',
           title: 'Категория удалена',
           content: `Категория "${categoryName}" была удалена`,
-          authorId,
+          authorId: actor.id,
           recipientId: null, // Всем
           categoryName: categoryName,
         },

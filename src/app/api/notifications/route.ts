@@ -1,39 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
 import { 
   validateId, 
   validateRequiredString, 
   validateString, 
   validateNotificationType,
-  validateBoolean,
   validateLimit,
   MAX_LENGTHS,
   isObject,
 } from '@/lib/validation';
+import { rateLimitMiddleware } from '@/lib/rate-limit';
+import { NotificationType } from '@prisma/client';
 
 // Получить уведомления для пользователя
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = validateId(searchParams.get('userId'));
-
-    if (!userId) {
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
-    // Получаем данные пользователя для фильтрации по городу/филиалу
-    const user = await db.user.findUnique({
-      where: { id: userId },
-      select: { city: true, branch: true },
-    });
-
-    // Получаем уведомления:
-    // 1. Адресованные конкретно этому пользователю
-    // 2. Общие уведомления (recipientId = null) - без фильтра или совпадающие по городу/филиалу
     const notifications = await db.notification.findMany({
       where: {
         OR: [
-          { recipientId: userId },
+          { recipientId: user.id },
           {
             AND: [
               { recipientId: null },
@@ -42,9 +34,9 @@ export async function GET(request: NextRequest) {
                   // Общие для всех (city = null)
                   { city: null },
                   // Для города пользователя
-                  { city: user?.city },
+                  { city: user.city },
                   // Для филиала пользователя
-                  { branch: user?.branch },
+                  { branch: user.branch },
                 ],
               },
             ],
@@ -56,11 +48,11 @@ export async function GET(request: NextRequest) {
           select: { id: true, name: true, role: true },
         },
         reads: {
-          where: { userId },
+          where: { userId: user.id },
         },
       },
       orderBy: { createdAt: 'desc' },
-      take: validateLimit(null, 50, 100),
+      take: 100,
     });
 
     // Добавляем поле isReadForUser
@@ -96,28 +88,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
     }
     
-    const { title, content, type, recipientId, authorId, city, branch } = body;
+    const { title, content, type, recipientId, city, branch } = body;
 
-    const validatedAuthorId = validateId(authorId);
-    const validatedTitle = validateRequiredString(title, MAX_LENGTHS.title);
-    const validatedContent = validateRequiredString(content, MAX_LENGTHS.content);
-    
-    if (!validatedAuthorId) {
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
+
+    const limited = rateLimitMiddleware(request, 'notifications', actor.id);
+    if (limited) return limited;
+
+    const validatedTitle = validateRequiredString(title, MAX_LENGTHS.title);
+    const validatedContent = validateRequiredString(content, MAX_LENGTHS.content);
 
     if (!validatedTitle || !validatedContent) {
       return NextResponse.json({ error: 'Заголовок и содержание обязательны' }, { status: 400 });
     }
 
     // Проверяем права
-    const user = await db.user.findUnique({ where: { id: validatedAuthorId } });
-    if (user?.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководитель может отправлять уведомления' }, { status: 403 });
     }
 
     // Валидируем тип уведомления
-    const validatedType = validateNotificationType(type) || 'MESSAGE';
+    const validatedType = (validateNotificationType(type) as NotificationType) || 'MESSAGE';
     
     // Валидируем получателя (если указан конкретный пользователь)
     const validatedRecipientId = validateId(recipientId);
@@ -131,7 +126,7 @@ export async function POST(request: NextRequest) {
         type: validatedType,
         title: validatedTitle,
         content: validatedContent,
-        authorId: validatedAuthorId,
+        authorId: actor.id,
         recipientId: validatedRecipientId, // null = всем
         city: validatedCity,               // null = всем городам
         branch: validatedBranch,           // null = всем филиалам
@@ -164,13 +159,18 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
     }
     
-    const { notificationId, userId } = body;
+    const { notificationId } = body;
 
     const validatedNotificationId = validateId(notificationId);
-    const validatedUserId = validateId(userId);
-    
-    if (!validatedNotificationId || !validatedUserId) {
-      return NextResponse.json({ error: 'ID уведомления и пользователь обязательны' }, { status: 400 });
+
+    if (!validatedNotificationId) {
+      return NextResponse.json({ error: 'ID уведомления обязателен' }, { status: 400 });
+    }
+
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
     // Проверяем, не прочитано ли уже
@@ -178,7 +178,7 @@ export async function PUT(request: NextRequest) {
       where: {
         notificationId_userId: {
           notificationId: validatedNotificationId,
-          userId: validatedUserId,
+          userId: user.id,
         },
       },
     });
@@ -191,7 +191,7 @@ export async function PUT(request: NextRequest) {
     await db.notificationRead.create({
       data: {
         notificationId: validatedNotificationId,
-        userId: validatedUserId,
+        userId: user.id,
       },
     });
 
@@ -216,19 +216,17 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
     }
     
-    const { userId } = body;
-
-    const validatedUserId = validateId(userId);
-    
-    if (!validatedUserId) {
-      return NextResponse.json({ error: 'Пользователь обязателен' }, { status: 400 });
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
     // Получаем все уведомления пользователя
     const notifications = await db.notification.findMany({
       where: {
         OR: [
-          { recipientId: validatedUserId },
+          { recipientId: user.id },
           { recipientId: null },
         ],
       },
@@ -238,14 +236,24 @@ export async function PATCH(request: NextRequest) {
     // Создаем записи о прочтении для всех
     const readData = notifications.map((n) => ({
       notificationId: n.id,
-      userId: validatedUserId,
+      userId: user.id,
     }));
 
     if (readData.length > 0) {
-      await db.notificationRead.createMany({
-        data: readData,
-        skipDuplicates: true,
+      // skipDuplicates не поддерживается SQLite-коннектором —
+      // фильтруем уже прочитанные заранее
+      const existingReads = await db.notificationRead.findMany({
+        where: { userId: user.id, notificationId: { in: readData.map((r) => r.notificationId) } },
+        select: { notificationId: true },
       });
+      const alreadyRead = new Set(existingReads.map((r) => r.notificationId));
+      const toCreate = readData.filter((r) => !alreadyRead.has(r.notificationId));
+
+      if (toCreate.length > 0) {
+        await db.notificationRead.createMany({ data: toCreate });
+      }
+
+      return NextResponse.json({ success: true, count: toCreate.length });
     }
 
     return NextResponse.json({ success: true, count: readData.length });
@@ -260,15 +268,19 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const id = validateId(searchParams.get('id'));
-    const userId = validateId(searchParams.get('userId'));
 
-    if (!id || !userId) {
-      return NextResponse.json({ error: 'ID уведомления и пользователь обязательны' }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: 'ID уведомления обязателен' }, { status: 400 });
+    }
+
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
     // Проверяем права
-    const user = await db.user.findUnique({ where: { id: userId } });
-    if (user?.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководитель может удалять уведомления' }, { status: 403 });
     }
 

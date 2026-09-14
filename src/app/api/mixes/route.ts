@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
 import { 
   validateId, 
   validateRequiredString, 
@@ -13,19 +14,20 @@ import {
 // Получить все миксы (личные пользователя + публичные)
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = validateId(searchParams.get('userId'));
-    const type = validateString(searchParams.get('type'), 20); // 'personal', 'public', 'all'
-
-    if (!userId) {
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
+
+    const { searchParams } = new URL(request.url);
+    const type = validateString(searchParams.get('type'), 20); // 'personal', 'public', 'all'
 
     if (type === 'personal') {
       // Личные миксы пользователя
       const mixes = await db.mix.findMany({
         where: {
-          authorId: userId,
+          authorId: user.id,
           isPublic: false,
         },
         include: {
@@ -62,7 +64,7 @@ export async function GET(request: NextRequest) {
     const mixes = await db.mix.findMany({
       where: {
         OR: [
-          { authorId: userId },
+          { authorId: user.id },
           { isPublic: true },
         ],
       },
@@ -98,26 +100,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
     }
     
-    const { name, description, isPublic, ingredients, authorId } = body;
+    const { name, description, isPublic, ingredients } = body;
 
-    const validatedAuthorId = validateId(authorId);
-    const validatedName = validateRequiredString(name, MAX_LENGTHS.name);
-    
-    if (!validatedAuthorId) {
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
+    const validatedName = validateRequiredString(name, MAX_LENGTHS.name);
+
     if (!validatedName) {
       return NextResponse.json({ error: 'Название обязательно' }, { status: 400 });
-    }
-
-    // Проверяем существование и статус пользователя
-    const user = await db.user.findUnique({
-      where: { id: validatedAuthorId, deletedAt: null, isApproved: true },
-    });
-
-    if (!user) {
-      return NextResponse.json({ error: 'Пользователь не найден или не авторизован' }, { status: 401 });
     }
 
     // Валидируем ингредиенты
@@ -128,7 +122,7 @@ export async function POST(request: NextRequest) {
         name: validatedName,
         description: validateString(description, MAX_LENGTHS.description),
         isPublic: validateBoolean(isPublic),
-        authorId: validatedAuthorId,
+        authorId: user.id,
         ingredients: {
           create: validatedIngredients?.map((ing) => ({
             tobacco: ing.tobacco,
@@ -167,13 +161,18 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
     }
     
-    const { id, name, description, isPublic, ingredients, userId } = body;
+    const { id, name, description, isPublic, ingredients } = body;
 
     const validatedId = validateId(id);
-    const validatedUserId = validateId(userId);
-    
-    if (!validatedId || !validatedUserId) {
-      return NextResponse.json({ error: 'ID микса и пользователя обязательны' }, { status: 400 });
+
+    if (!validatedId) {
+      return NextResponse.json({ error: 'ID микса обязателен' }, { status: 400 });
+    }
+
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
     // Проверяем права
@@ -181,7 +180,7 @@ export async function PUT(request: NextRequest) {
       where: { id: validatedId },
     });
 
-    if (!existingMix || existingMix.authorId !== validatedUserId) {
+    if (!existingMix || existingMix.authorId !== user.id) {
       return NextResponse.json({ error: 'Микс не найден или нет прав на редактирование' }, { status: 403 });
     }
 
@@ -229,10 +228,15 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const id = validateId(searchParams.get('id'));
-    const userId = validateId(searchParams.get('userId'));
 
-    if (!id || !userId) {
-      return NextResponse.json({ error: 'ID микса и пользователя обязательны' }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: 'ID микса обязателен' }, { status: 400 });
+    }
+
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
     // Проверяем права
@@ -240,7 +244,7 @@ export async function DELETE(request: NextRequest) {
       where: { id },
     });
 
-    if (!existingMix || existingMix.authorId !== userId) {
+    if (!existingMix || existingMix.authorId !== user.id) {
       return NextResponse.json({ error: 'Микс не найден или нет прав на удаление' }, { status: 403 });
     }
 

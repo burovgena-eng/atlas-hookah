@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -61,38 +61,23 @@ export function ClientsSection() {
     isPublic: true,
   });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    
-    const fetchClients = async () => {
-      if (!user) return;
+  const fetchClients = useCallback(async () => {
+    if (!user) return;
 
-      try {
-        const response = await fetch(`/api/clients?masterId=${user.id}&type=all`, {
-          signal: controller.signal,
-        });
-        const data = await response.json();
-        if (!controller.signal.aborted) {
-          setClients(data.clients || []);
-        }
-      } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') {
-          return; // Запрос был отменён, игнорируем
-        }
-        console.error('Error fetching clients:', error);
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    fetchClients();
-    
-    return () => {
-      controller.abort();
-    };
+    try {
+      const response = await fetch('/api/clients?type=all');
+      const data = await response.json();
+      setClients(data.clients || []);
+    } catch (error) {
+      console.error('Error fetching clients:', error);
+    } finally {
+      setIsLoading(false);
+    }
   }, [user]);
+
+  useEffect(() => {
+    fetchClients();
+  }, [fetchClients]);
 
   const resetForm = () => {
     setFormData({

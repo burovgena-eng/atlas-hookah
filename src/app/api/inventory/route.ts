@@ -1,6 +1,7 @@
 // API для инвентаризации табака
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
 import { TobaccoCategory } from '@prisma/client';
 import { 
   validateId, 
@@ -21,26 +22,31 @@ const CATEGORY_LABELS: Record<TobaccoCategory, string> = {
   CATEGORY_D: 'Категория D (Сигарный лист)',
 };
 
+// Допустимые категории для валидации пользовательского ввода
+const VALID_CATEGORIES: string[] = Object.values(TobaccoCategory);
+
 // Получить сессии инвентаризации
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const userId = validateId(searchParams.get('userId'));
-    const userRole = validateString(searchParams.get('userRole'), 20);
     const limit = validateLimit(searchParams.get('limit'), 50, 100);
     const offset = validateOffset(searchParams.get('offset'));
+
+    // Актор и роль только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
 
     // Фильтры
     const where: Record<string, unknown> = {};
 
     // Роль определяет доступ
-    if (userRole === 'MANAGER' || userRole === 'SENIOR_MASTER') {
+    if (actor.role === 'MANAGER' || actor.role === 'SENIOR_MASTER') {
       // Руководители и старшие мастера видят все записи
     } else {
       // Обычные мастера видят только свои записи
-      if (userId) {
-        where.masterId = userId;
-      }
+      where.masterId = actor.id;
     }
 
     // Получаем сессии с записями
@@ -123,21 +129,20 @@ export async function POST(request: NextRequest) {
     }
     
     const { 
-      userId,
       records, // Массив записей по категориям: [{ category, totalWeight, containers }, ...]
       notes,
     } = body;
 
-    const validatedUserId = validateId(userId);
-    
-    // Валидация
-    if (!validatedUserId) {
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
       return NextResponse.json(
         { error: 'Пользователь не авторизован' },
         { status: 401 }
       );
     }
 
+    // Валидация
     if (!isArray(records) || records.length === 0) {
       return NextResponse.json(
         { error: 'Нет данных для сохранения' },
@@ -155,7 +160,7 @@ export async function POST(request: NextRequest) {
 
     // Получаем пользователя
     const user = await db.user.findUnique({
-      where: { id: validatedUserId },
+      where: { id: actor.id },
       select: { id: true, city: true, branch: true },
     });
 
@@ -167,13 +172,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Подготавливаем данные для записей
-    const recordsData = [];
+    const recordsData: Array<{
+      category: TobaccoCategory;
+      totalWeight: number;
+      containersWeight: number;
+      netWeight: number;
+      containers: { create: { containerTypeId: string; quantity: number }[] };
+    }> = [];
     
     for (const record of records) {
       if (!isObject(record)) continue;
       
       // Валидация категории
-      if (!record.category || !Object.values(TobaccoCategory).includes(record.category)) {
+      if (!record.category || typeof record.category !== 'string' ||
+          !VALID_CATEGORIES.includes(record.category)) {
         continue;
       }
       
@@ -255,7 +267,7 @@ export async function POST(request: NextRequest) {
     const session = await db.inventorySession.create({
       data: {
         notes: validatedNotes,
-        masterId: validatedUserId,
+        masterId: actor.id,
         city: user.city,
         branch: user.branch,
         records: {
@@ -300,8 +312,6 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const id = validateId(searchParams.get('id')); // ID сессии
-    const userId = validateId(searchParams.get('userId'));
-    const userRole = validateString(searchParams.get('userRole'), 20);
 
     if (!id) {
       return NextResponse.json(
@@ -310,7 +320,9 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    if (!userId) {
+    // Актор и роль только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
       return NextResponse.json(
         { error: 'Пользователь не авторизован' },
         { status: 401 }
@@ -330,7 +342,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Проверяем права: только автор или руководитель/старший мастер могут удалить
-    if (session.masterId !== userId && userRole !== 'MANAGER' && userRole !== 'SENIOR_MASTER') {
+    if (session.masterId !== actor.id && actor.role !== 'MANAGER' && actor.role !== 'SENIOR_MASTER') {
       return NextResponse.json(
         { error: 'У вас нет прав для удаления этой записи' },
         { status: 403 }

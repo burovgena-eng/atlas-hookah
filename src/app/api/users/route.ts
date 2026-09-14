@@ -1,13 +1,17 @@
-// API для управления пользователями - v2
+// API для управления пользователями
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import * as crypto from 'crypto';
-import { 
-  validateId, 
-  validateEmail, 
-  validatePassword, 
-  validateRequiredString, 
-  validatePhone, 
+import {
+  getAuthUser,
+  SAFE_USER_SELECT,
+} from '@/lib/auth';
+import {
+  validateId,
+  validateEmail,
+  validatePassword,
+  validateRequiredString,
+  validatePhone,
   validateRole,
   validateString,
   validateUrl,
@@ -16,6 +20,8 @@ import {
   MAX_LENGTHS,
   isObject,
 } from '@/lib/validation';
+import { rateLimitMiddleware } from '@/lib/rate-limit';
+import { logSecurityEvent } from '@/lib/security-logger';
 
 // Функция для хеширования пароля
 async function hashPassword(password: string): Promise<string> {
@@ -32,14 +38,17 @@ async function hashPassword(password: string): Promise<string> {
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const userId = validateId(searchParams.get('userId'));
     const filter = validateString(searchParams.get('filter'), 20); // 'pending', 'approved', 'all', 'deleted'
 
-    // Проверяем права
-    const user = userId ? await db.user.findUnique({ where: { id: userId } }) : null;
-    const isManager = user?.role === 'MANAGER';
-    const isSeniorMaster = user?.role === 'SENIOR_MASTER';
-    
+    // Актор определяется только по серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
+
+    const isManager = actor.role === 'MANAGER';
+    const isSeniorMaster = actor.role === 'SENIOR_MASTER';
+
     if (!isManager && !isSeniorMaster) {
       return NextResponse.json({ error: 'Доступ запрещен' }, { status: 403 });
     }
@@ -76,8 +85,7 @@ export async function GET(request: NextRequest) {
         updatedAt: true,
         _count: {
           select: {
-            personalMixes: true,
-            publicMixes: true,
+            mixes: true,
             clientNotes: true,
           },
         },
@@ -106,18 +114,17 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
     }
     
-    const { id, isApproved, userId } = body;
+    const { id, isApproved } = body;
 
     const validatedId = validateId(id);
-    const validatedUserId = validateId(userId);
-    
-    if (!validatedId || !validatedUserId) {
+
+    if (!validatedId) {
       return NextResponse.json({ error: 'ID пользователя обязателен' }, { status: 400 });
     }
 
-    // Проверяем права - только руководитель может подтверждать
-    const currentUser = await db.user.findUnique({ where: { id: validatedUserId } });
-    if (currentUser?.role !== 'MANAGER') {
+    // Актор только из серверной сессии - только руководитель может подтверждать
+    const actor = await getAuthUser(request);
+    if (!actor || actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководитель может подтверждать сотрудников' }, { status: 403 });
     }
 
@@ -159,19 +166,22 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
     }
     
-    const { id, name, bio, phone, avatar, city, branch, birthDate, role, userId } = body;
+    const { id, name, bio, phone, avatar, city, branch, birthDate, role } = body;
 
     const validatedId = validateId(id);
-    const validatedUserId = validateId(userId);
-    
-    if (!validatedId || !validatedUserId) {
+
+    if (!validatedId) {
       return NextResponse.json({ error: 'ID пользователя обязателен' }, { status: 400 });
     }
 
-    // Проверяем права - можно редактировать только свой профиль или быть руководителем
-    const currentUser = await db.user.findUnique({ where: { id: validatedUserId } });
-    const isManager = currentUser?.role === 'MANAGER';
-    const isSelf = validatedId === validatedUserId;
+    // Актор только из серверной сессии: редактировать можно свой профиль,
+    // либо любой другой при роли руководителя
+    const actor = await getAuthUser(request);
+    if (!actor) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
+    const isManager = actor.role === 'MANAGER';
+    const isSelf = validatedId === actor.id;
 
     if (!isSelf && !isManager) {
       return NextResponse.json({ error: 'Нет прав на редактирование' }, { status: 403 });
@@ -181,6 +191,11 @@ export async function PUT(request: NextRequest) {
     const validatedRole = validateRole(role);
     if (role && !isManager) {
       return NextResponse.json({ error: 'Только руководитель может менять роли' }, { status: 403 });
+    }
+
+    // Смена собственной роли заблокирована для всех (защита от self-escalation)
+    if (validatedRole && validatedId === actor.id) {
+      return NextResponse.json({ error: 'Нельзя изменить собственную роль' }, { status: 400 });
     }
 
     const updateData: Record<string, unknown> = {};
@@ -224,12 +239,12 @@ export async function PUT(request: NextRequest) {
     const user = await db.user.update({
       where: { id: validatedId },
       data: updateData,
+      select: SAFE_USER_SELECT,
     });
 
-    // Удаляем пароль из ответа
-    const { password: _, ...userWithoutPassword } = user;
+    await logSecurityEvent('USER_UPDATED', { userId: actor.id, ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1', details: { targetId: validatedId } }).catch(() => {});
 
-    return NextResponse.json({ user: userWithoutPassword });
+    return NextResponse.json({ user });
   } catch (error) {
     console.error('Update user error:', error);
     return NextResponse.json({ error: 'Ошибка при обновлении профиля' }, { status: 500 });
@@ -250,25 +265,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
     }
     
-    const { email, password, name, phone, role, userId } = body;
+    const { email, password, name, phone, role } = body;
 
-    const validatedUserId = validateId(userId);
     const validatedEmail = validateEmail(email);
     const validatedPassword = validatePassword(password);
     const validatedName = validateRequiredString(name, MAX_LENGTHS.name);
-    
-    if (!validatedUserId) {
-      return NextResponse.json({ error: 'ID пользователя обязателен' }, { status: 400 });
+
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor || actor.role !== 'MANAGER') {
+      return NextResponse.json({ error: 'Только руководитель может создавать пользователей' }, { status: 403 });
     }
 
     if (!validatedEmail || !validatedPassword || !validatedName) {
       return NextResponse.json({ error: 'Обязательные поля должны быть заполнены' }, { status: 400 });
-    }
-
-    // Проверяем права
-    const currentUser = await db.user.findUnique({ where: { id: validatedUserId } });
-    if (currentUser?.role !== 'MANAGER') {
-      return NextResponse.json({ error: 'Только руководитель может создавать пользователей' }, { status: 403 });
     }
 
     // Проверяем, существует ли пользователь
@@ -310,6 +320,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    await logSecurityEvent('USER_CREATED', { userId: actor.id, ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1', details: { targetId: user.id } }).catch(() => {});
+
     return NextResponse.json({ user });
   } catch (error) {
     console.error('Create user error:', error);
@@ -322,33 +334,34 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const id = validateId(searchParams.get('id'));
-    const userId = validateId(searchParams.get('userId'));
 
-    if (!id || !userId) {
+    if (!id) {
       return NextResponse.json({ error: 'ID пользователя обязателен' }, { status: 400 });
     }
 
-    // Проверяем права
-    const currentUser = await db.user.findUnique({ where: { id: userId } });
-    if (currentUser?.role !== 'MANAGER') {
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor || actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководитель может удалять пользователей' }, { status: 403 });
     }
 
     // Нельзя удалить самого себя
-    if (id === userId) {
+    if (id === actor.id) {
       return NextResponse.json({ error: 'Нельзя удалить свой профиль' }, { status: 400 });
     }
 
-    // Soft delete - помечаем пользователя как удалённого
-    // Его данные (миксы, постоянники) остаются в базе
+    // Мягкое удаление + инвалидация всех сессий пользователя (мгновенная деавторизация)
     await db.user.update({
       where: { id },
-      data: { 
+      data: {
         deletedAt: new Date(),
         // Деактивируем аккаунт
         isApproved: false,
       },
     });
+    await db.session.deleteMany({ where: { userId: id } });
+
+    await logSecurityEvent('USER_DELETED', { userId: actor.id, ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1', details: { targetId: id } });
 
     return NextResponse.json({ success: true });
   } catch (error) {

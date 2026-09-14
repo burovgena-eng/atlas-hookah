@@ -20,6 +20,7 @@ export type SecurityEventType =
   | 'UNAUTHORIZED_ACCESS'
   // Действия с данными
   | 'USER_CREATED'
+  | 'USER_UPDATED'
   | 'USER_DELETED'
   | 'USER_APPROVED'
   | 'ROLE_CHANGED'

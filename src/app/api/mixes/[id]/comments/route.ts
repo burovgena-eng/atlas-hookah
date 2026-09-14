@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
+import { validateId, validateRequiredString, MAX_LENGTHS } from '@/lib/validation';
 
 // Получить комментарии к миксу
 export async function GET(
@@ -8,9 +10,14 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const mixId = validateId(id);
+
+    if (!mixId) {
+      return NextResponse.json({ error: 'Некорректный ID микса' }, { status: 400 });
+    }
 
     const comments = await db.mixComment.findMany({
-      where: { mixId: id },
+      where: { mixId },
       include: {
         user: {
           select: { id: true, name: true, avatar: true, role: true },
@@ -32,18 +39,35 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params;
-    const body = await request.json();
-    const { userId, content } = body;
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
 
-    if (!userId || !content) {
-      return NextResponse.json({ error: 'Требуется авторизация и текст комментария' }, { status: 400 });
+    const { id } = await params;
+    const mixId = validateId(id);
+
+    if (!mixId) {
+      return NextResponse.json({ error: 'Некорректный ID микса' }, { status: 400 });
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Некорректный формат запроса' }, { status: 400 });
+    }
+
+    const content = validateRequiredString(body?.content, 1000);
+    if (!content) {
+      return NextResponse.json({ error: 'Текст комментария обязателен' }, { status: 400 });
     }
 
     const comment = await db.mixComment.create({
       data: {
-        mixId: id,
-        userId,
+        mixId,
+        userId: user.id,
         content,
       },
       include: {
@@ -66,13 +90,17 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params;
-    const { searchParams } = new URL(request.url);
-    const commentId = searchParams.get('commentId');
-    const userId = searchParams.get('userId');
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
 
-    if (!commentId || !userId) {
-      return NextResponse.json({ error: 'ID комментария и пользователь обязательны' }, { status: 400 });
+    const { searchParams } = new URL(request.url);
+    const commentId = validateId(searchParams.get('commentId'));
+
+    if (!commentId) {
+      return NextResponse.json({ error: 'ID комментария обязателен' }, { status: 400 });
     }
 
     // Проверяем права
@@ -84,7 +112,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Комментарий не найден' }, { status: 404 });
     }
 
-    if (comment.userId !== userId) {
+    if (comment.userId !== user.id) {
       return NextResponse.json({ error: 'Нет прав на удаление' }, { status: 403 });
     }
 

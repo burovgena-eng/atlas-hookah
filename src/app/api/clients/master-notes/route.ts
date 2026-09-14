@@ -1,19 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
+import { validateId, validateString, MAX_LENGTHS } from '@/lib/validation';
 
 // Создать или обновить личную заметку мастера о клиенте
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { clientNoteId, masterId, notes } = body;
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
 
-    if (!clientNoteId || !masterId) {
-      return NextResponse.json({ error: 'Обязательные поля должны быть заполнены' }, { status: 400 });
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Некорректный формат запроса' }, { status: 400 });
+    }
+
+    const { clientNoteId, notes } = body;
+    const validatedClientNoteId = validateId(clientNoteId);
+
+    if (!validatedClientNoteId) {
+      return NextResponse.json({ error: 'ID клиента обязателен' }, { status: 400 });
     }
 
     // Проверяем, что клиент существует и доступен мастеру
     const clientNote = await db.clientNote.findUnique({
-      where: { id: clientNoteId },
+      where: { id: validatedClientNoteId },
     });
 
     if (!clientNote) {
@@ -21,7 +36,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Проверяем доступ: либо это свой клиент, либо публичный
-    if (clientNote.masterId !== masterId && !clientNote.isPublic) {
+    if (clientNote.masterId !== user.id && !clientNote.isPublic) {
       return NextResponse.json({ error: 'Нет доступа к этому клиенту' }, { status: 403 });
     }
 
@@ -29,17 +44,17 @@ export async function POST(request: NextRequest) {
     const masterNote = await db.clientMasterNote.upsert({
       where: {
         clientNoteId_masterId: {
-          clientNoteId,
-          masterId,
+          clientNoteId: validatedClientNoteId,
+          masterId: user.id,
         },
       },
       update: {
-        notes: notes || '',
+        notes: validateString(notes, MAX_LENGTHS.notes) || '',
       },
       create: {
-        clientNoteId,
-        masterId,
-        notes: notes || '',
+        clientNoteId: validatedClientNoteId,
+        masterId: user.id,
+        notes: validateString(notes, MAX_LENGTHS.notes) || '',
       },
     });
 
@@ -53,19 +68,24 @@ export async function POST(request: NextRequest) {
 // Удалить личную заметку мастера о клиенте
 export async function DELETE(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const clientNoteId = searchParams.get('clientNoteId');
-    const masterId = searchParams.get('masterId');
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
 
-    if (!clientNoteId || !masterId) {
-      return NextResponse.json({ error: 'Обязательные параметры' }, { status: 400 });
+    const { searchParams } = new URL(request.url);
+    const clientNoteId = validateId(searchParams.get('clientNoteId'));
+
+    if (!clientNoteId) {
+      return NextResponse.json({ error: 'ID клиента обязателен' }, { status: 400 });
     }
 
     await db.clientMasterNote.delete({
       where: {
         clientNoteId_masterId: {
           clientNoteId,
-          masterId,
+          masterId: user.id,
         },
       },
     });

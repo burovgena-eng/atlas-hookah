@@ -2,34 +2,36 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import * as crypto from 'crypto';
 
-// Функция для хеширования пароля
+// Функция для хеширования пароля (тот же формат, что и в /api/auth)
 async function hashPassword(password: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const salt = crypto.randomBytes(16).toString('hex');
-    crypto.pbkdf2(password, salt, 1000, 64, 'sha512', (err, derivedKey) => {
+    crypto.pbkdf2(password, salt, 10000, 64, 'sha512', (err, derivedKey) => {
       if (err) reject(err);
-      resolve(`${salt}:${derivedKey.toString('hex')}`);
+      resolve(`10000:${salt}:${derivedKey.toString('hex')}`);
     });
   });
 }
 
-// Seed - создание тестовых пользователей
+// Seed - создание демо-пользователей.
+// Вызывается один раз на пустой базе для быстрого старта (см. README).
+// Для продакшена: удалите этот маршрут или закройте его авторизацией.
 export async function POST(request: NextRequest) {
   try {
     // Проверяем, есть ли уже пользователи
-    const existingUsers = await db.user.findMany();
-    
-    if (existingUsers.length > 0) {
-      return NextResponse.json({ 
+    const existingUsers = await db.user.count();
+
+    if (existingUsers > 0) {
+      return NextResponse.json({
         message: 'Пользователи уже существуют',
-        count: existingUsers.length 
+        count: existingUsers,
       });
     }
 
     const hashedPassword = await hashPassword('123456');
 
-    // Создаем тестовых пользователей
-    const manager = await db.user.create({
+    // Создаем демо-пользователей
+    await db.user.create({
       data: {
         email: 'manager@atlas.com',
         password: hashedPassword,
@@ -39,7 +41,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    const master = await db.user.create({
+    await db.user.create({
       data: {
         email: 'master@atlas.com',
         password: hashedPassword,
@@ -49,37 +51,15 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ 
-      message: 'Тестовые пользователи созданы',
+    return NextResponse.json({
+      message: 'Демо-пользователи созданы',
       users: [
         { email: 'manager@atlas.com', password: '123456', role: 'MANAGER' },
         { email: 'master@atlas.com', password: '123456', role: 'HOOKAH_MASTER' },
-      ]
+      ],
     });
   } catch (error) {
     console.error('Seed error:', error);
     return NextResponse.json({ error: 'Ошибка при создании пользователей' }, { status: 500 });
-  }
-}
-
-// Получить всех пользователей (для диагностики)
-export async function GET(request: NextRequest) {
-  try {
-    const users = await db.user.findMany({
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        isApproved: true,
-        deletedAt: true,
-        createdAt: true,
-      },
-    });
-
-    return NextResponse.json({ users });
-  } catch (error) {
-    console.error('Get users error:', error);
-    return NextResponse.json({ error: 'Ошибка при получении пользователей' }, { status: 500 });
   }
 }

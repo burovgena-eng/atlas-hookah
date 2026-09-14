@@ -1,141 +1,106 @@
-# 🚀 Welcome to Z.ai Code Scaffold
+# 🎭 Atlas Hookah
 
-A modern, production-ready web application scaffold powered by cutting-edge technologies, designed to accelerate your development with [Z.ai](https://chat.z.ai)'s AI-powered coding assistance.
+**Система управления кальянной сетью** — full-stack веб-приложение для команды кальянной: личные и публичные миксы с лентой лайков и комментариев, авторские рецептуры от руководителя, CRM постоянных клиентов, база знаний с ролевой видимостью, инвентаризация табака и внутренние уведомления.
 
-## ✨ Technology Stack
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)
+![React](https://img.shields.io/badge/React-19-149ECA?logo=react)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript)
+![Prisma](https://img.shields.io/badge/Prisma-6-2D3748?logo=prisma)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-This scaffold provides a robust foundation built with:
+## ✨ Возможности
 
-### 🎯 Core Framework
-- **⚡ Next.js 16** - The React framework for production with App Router
-- **📘 TypeScript 5** - Type-safe JavaScript for better developer experience
-- **🎨 Tailwind CSS 4** - Utility-first CSS framework for rapid UI development
+| Модуль | Что умеет |
+|---|---|
+| 🔐 **Аутентификация** | Серверные сессии с токенами (SHA-256 хеш в БД), PBKDF2-хеширование паролей, ролевая модель (HOOKAH_MASTER / SENIOR_MASTER / ADMIN / MANAGER), подтверждение аккаунтов руководителем, мгновенная деавторизация при удалении сотрудника |
+| 🚬 **Миксы** | Личные и публичные миксы, ингредиенты (бренд/количество/слой), лайки, комментарии, авторский контроль доступа |
+| 📋 **Рецептуры** | Официальные рецепты от руководителя с пошаговыми инструкциями и авто-уведомлениями команды |
+| 👥 **Клиенты (CRM)** | База постоянных клиентов: предпочтения, любимые миксы, счётчик визитов; публичные и личные заметки каждого мастера о клиенте |
+| 📚 **База знаний** | Категории и подкатегории, ролевая видимость статей (COMMON / MASTER / ADMIN), поиск, уведомления об изменениях |
+| 📦 **Инвентаризация** | Учёт табака по категориям (A/C/D), калькуляция чистого веса с вычетом тары по справочнику контейнеров, сессии инвентаризации |
+| 🔔 **Уведомления** | Адресные и широковещательные, таргетинг по городу/филиалу, статусы прочтения |
+| 🛡 **Безопасность** | Rate limiting (логин/регистрация/уведомления/загрузки), защита от path traversal, CSRF-модуль, журналирование событий безопасности, санитизация и валидация всех входных данных |
 
-### 🧩 UI Components & Styling
-- **🧩 shadcn/ui** - High-quality, accessible components built on Radix UI
-- **🎯 Lucide React** - Beautiful & consistent icon library
-- **🌈 Framer Motion** - Production-ready motion library for React
-- **🎨 Next Themes** - Perfect dark mode in 2 lines of code
+## 🛠 Стек
 
-### 📋 Forms & Validation
-- **🎣 React Hook Form** - Performant forms with easy validation
-- **✅ Zod** - TypeScript-first schema validation
+- **Next.js 16** (App Router, Turbopack, standalone output) + **React 19**
+- **TypeScript** (strict mode)
+- **Prisma 6** — SQLite для разработки, PostgreSQL для продакшена (Vercel + Supabase)
+- **Tailwind CSS 4** + **shadcn/ui** (Radix UI)
+- **Bun** как пакетный менеджер и рантайм
 
-### 🔄 State Management & Data Fetching
-- **🐻 Zustand** - Simple, scalable state management
-- **🔄 TanStack Query** - Powerful data synchronization for React
-- **🌐 Fetch** - Promise-based HTTP request
+## 🚀 Быстрый старт
 
-### 🗄️ Database & Backend
-- **🗄️ Prisma** - Next-generation TypeScript ORM
-- **🔐 NextAuth.js** - Complete open-source authentication solution
-
-### 🎨 Advanced UI Features
-- **📊 TanStack Table** - Headless UI for building tables and datagrids
-- **🖱️ DND Kit** - Modern drag and drop toolkit for React
-- **📊 Recharts** - Redefined chart library built with React and D3
-- **🖼️ Sharp** - High performance image processing
-
-### 🌍 Internationalization & Utilities
-- **🌍 Next Intl** - Internationalization library for Next.js
-- **📅 Date-fns** - Modern JavaScript date utility library
-- **🪝 ReactUse** - Collection of essential React hooks for modern development
-
-## 🎯 Why This Scaffold?
-
-- **🏎️ Fast Development** - Pre-configured tooling and best practices
-- **🎨 Beautiful UI** - Complete shadcn/ui component library with advanced interactions
-- **🔒 Type Safety** - Full TypeScript configuration with Zod validation
-- **📱 Responsive** - Mobile-first design principles with smooth animations
-- **🗄️ Database Ready** - Prisma ORM configured for rapid backend development
-- **🔐 Auth Included** - NextAuth.js for secure authentication flows
-- **📊 Data Visualization** - Charts, tables, and drag-and-drop functionality
-- **🌍 i18n Ready** - Multi-language support with Next Intl
-- **🚀 Production Ready** - Optimized build and deployment settings
-- **🤖 AI-Friendly** - Structured codebase perfect for AI assistance
-
-## 🚀 Quick Start
+Требования: [Bun](https://bun.sh) ≥ 1.2 или Node.js ≥ 20.
 
 ```bash
-# Install dependencies
-bun install
+git clone https://github.com/burovgena-eng/atlas-hookah.git
+cd atlas-hookah
 
-# Start development server
-bun run dev
-
-# Build for production
-bun run build
-
-# Start production server
-bun start
+bun install                # установка зависимостей (+ авто prisma generate)
+bunx prisma db push        # создание SQLite-базы (prisma/dev.db)
+bun run dev                # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to see your application running.
+При первом запуске создайте аккаунт руководителя через страницу регистрации — **первый зарегистрированный MANAGER подтверждается автоматически**.
 
-## 🤖 Powered by Z.ai
+Либо создайте демо-пользователей одним запросом (только на пустой базе):
 
-This scaffold is optimized for use with [Z.ai](https://chat.z.ai) - your AI assistant for:
+```bash
+curl -X POST http://localhost:3000/api/seed
+# manager@atlas.com / 123456  (MANAGER)
+# master@atlas.com  / 123456  (HOOKAH_MASTER)
+```
 
-- **💻 Code Generation** - Generate components, pages, and features instantly
-- **🎨 UI Development** - Create beautiful interfaces with AI assistance  
-- **🔧 Bug Fixing** - Identify and resolve issues with intelligent suggestions
-- **📝 Documentation** - Auto-generate comprehensive documentation
-- **🚀 Optimization** - Performance improvements and best practices
+> ⚠️ Для публичного деплоя удалите `/api/seed` или измените демо-пароли.
 
-Ready to build something amazing? Start chatting with Z.ai at [chat.z.ai](https://chat.z.ai) and experience the future of AI-powered development!
+## 📦 Деплой на Vercel (PostgreSQL)
 
-## 📁 Project Structure
+Пошаговое руководство — в [DEPLOY.md](DEPLOY.md): Supabase → Vercel → переменные окружения. Схема для продакшена подставляется автоматически (`vercel.json` → `schema.postgres.prisma`).
+
+## 🗂 Структура проекта
 
 ```
 src/
-├── app/                 # Next.js App Router pages
-├── components/          # Reusable React components
-│   └── ui/             # shadcn/ui components
-├── hooks/              # Custom React hooks
-└── lib/                # Utility functions and configurations
+├── app/
+│   ├── api/              # 18 REST-эндпоинтов (auth, mixes, clients, knowledge, ...)
+│   ├── upload/[type]/    # защищённая отдача загруженных файлов
+│   └── layout.tsx        # корневой layout с метаданными
+├── components/
+│   ├── sections/         # 12 секций приложения (dashboard, mixes, CRM, ...)
+│   ├── auth/             # страница входа/регистрации
+│   └── ui/               # shadcn/ui компоненты
+├── hooks/                # use-auth (сессии + интерцептор), use-notifications
+├── lib/
+│   ├── auth.ts           # серверные сессии: выпуск/проверка/инвалидация токенов
+│   ├── db.ts             # синглтон Prisma Client
+│   ├── rate-limit.ts     # in-memory rate limiter
+│   ├── csrf.ts           # CSRF-токены (timing-safe сравнение)
+│   ├── security-logger.ts# журнал событий безопасности
+│   ├── backup.ts         # бэкап/восстановление БД
+│   └── validation.ts     # валидация и санитизация входных данных
+└── types/                # общие TypeScript-типы
 ```
 
-## 🎨 Available Features & Components
+## 🔒 Модель безопасности
 
-This scaffold includes a comprehensive set of modern web development tools:
+- **Пароли** — PBKDF2-SHA512 (10 000 итераций, случайная соль), сравнение хешей timing-safe
+- **Сессии** — случайный 256-битный токен, в БД только SHA-256 хеш; TTL 30 дней; инвалидация при выходе и удалении пользователя
+- **Авторизация** — актор определяется **исключительно по серверной сессии** (`X-Session-Token`), а не по переданным клиентом ID
+- **Валидация** — все входные данные проходят через утилиты `lib/validation.ts` (длины, форматы, enum'ы, пагинация)
+- **Загрузка файлов** — проверка MIME, magic numbers, whitelist расширений, криптостойкие имена, лимит 5 МБ
+- **Rate limiting** — вход: 5/мин с блокировкой 15 мин; регистрация: 3/час; уведомления: 10/мин; загрузки: 20/мин
+- Журнал безопасности пишется в `logs/security-YYYY-MM-DD.log` (доступен руководителю через UI)
 
-### 🧩 UI Components (shadcn/ui)
-- **Layout**: Card, Separator, Aspect Ratio, Resizable Panels
-- **Forms**: Input, Textarea, Select, Checkbox, Radio Group, Switch
-- **Feedback**: Alert, Toast (Sonner), Progress, Skeleton
-- **Navigation**: Breadcrumb, Menubar, Navigation Menu, Pagination
-- **Overlay**: Dialog, Sheet, Popover, Tooltip, Hover Card
-- **Data Display**: Badge, Avatar, Calendar
+## 🧪 Сборка
 
-### 📊 Advanced Data Features
-- **Tables**: Powerful data tables with sorting, filtering, pagination (TanStack Table)
-- **Charts**: Beautiful visualizations with Recharts
-- **Forms**: Type-safe forms with React Hook Form + Zod validation
+```bash
+bun run build    # production-сборка (Turbopack, standalone)
+bun run start    # запуск standalone-сервера
+bun run lint     # ESLint
+```
 
-### 🎨 Interactive Features
-- **Animations**: Smooth micro-interactions with Framer Motion
-- **Drag & Drop**: Modern drag-and-drop functionality with DND Kit
-- **Theme Switching**: Built-in dark/light mode support
+## 📄 Лицензия
 
-### 🔐 Backend Integration
-- **Authentication**: Ready-to-use auth flows with NextAuth.js
-- **Database**: Type-safe database operations with Prisma
-- **API Client**: HTTP requests with Fetch + TanStack Query
-- **State Management**: Simple and scalable with Zustand
-
-### 🌍 Production Features
-- **Internationalization**: Multi-language support with Next Intl
-- **Image Optimization**: Automatic image processing with Sharp
-- **Type Safety**: End-to-end TypeScript with Zod validation
-- **Essential Hooks**: 100+ useful React hooks with ReactUse for common patterns
-
-## 🤝 Get Started with Z.ai
-
-1. **Clone this scaffold** to jumpstart your project
-2. **Visit [chat.z.ai](https://chat.z.ai)** to access your AI coding assistant
-3. **Start building** with intelligent code generation and assistance
-4. **Deploy with confidence** using the production-ready setup
-
----
-
-Built with ❤️ for the developer community. Supercharged by [Z.ai](https://chat.z.ai) 🚀
+[MIT](LICENSE) © 2025 burovgena-eng

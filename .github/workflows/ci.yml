@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Lint
+        run: bun run lint --if-present
+
+      - name: Build (Turbopack + TypeScript strict)
+        run: bun run build
+
+      - name: Smoke test API
+        run: |
+          bunx prisma db push
+          mkdir -p .next/standalone/public .next/standalone/.next
+          cp -r public .next/standalone/ 2>/dev/null || true
+          cp -r .next/static .next/standalone/.next/static
+          cp -r prisma .next/standalone/prisma
+          cd .next/standalone
+          PORT=3999 node server.js &
+          sleep 5
+          curl -sf http://localhost:3999/api | grep -q '"database":"up"'
+          curl -sf -X POST http://localhost:3999/api/seed | grep -q 'success\|созданы\|существуют'
+          curl -sf -X PUT http://localhost:3999/api/auth \
+            -H "Content-Type: application/json" \
+            -d '{"email":"manager@atlas.com","password":"123456"}' \
+            | grep -q '"token"'
+          echo "Smoke tests passed"

@@ -198,6 +198,18 @@ export function KnowledgeSection() {
     }
   };
 
+  // Загрузить все статьи (используется после создания/удаления/обновления)
+  const fetchAllArticles = async () => {
+    if (!user) return;
+    try {
+      const response = await fetch('/api/knowledge');
+      const data = await response.json();
+      setAllArticles(data.articles || []);
+    } catch (error) {
+      console.error('Error fetching all articles:', error);
+    }
+  };
+
   const fetchArticlesByCategory = async (categoryId: string) => {
     if (!user) return;
     try {
@@ -851,7 +863,7 @@ export function KnowledgeSection() {
                       {(category._count?.subcategories || 0) > 0 && (
                         <span className="flex items-center gap-1">
                           <FolderOpen className="w-4 h-4" />
-                          {category._count.subcategories} подкатегорий
+                          {category._count?.subcategories} подкатегорий
                         </span>
                       )}
                     </div>

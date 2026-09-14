@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -53,38 +53,23 @@ export function MyMixesSection() {
     ingredients: [{ tobacco: '', brand: '', amount: '', layer: '' }],
   });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    
-    const fetchMixes = async () => {
-      if (!user) return;
+  const fetchMixes = useCallback(async () => {
+    if (!user) return;
 
-      try {
-        const response = await fetch(`/api/mixes?userId=${user.id}&type=personal`, {
-          signal: controller.signal,
-        });
-        const data = await response.json();
-        if (!controller.signal.aborted) {
-          setMixes(data.mixes || []);
-        }
-      } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') {
-          return;
-        }
-        console.error('Error fetching mixes:', error);
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    fetchMixes();
-    
-    return () => {
-      controller.abort();
-    };
+    try {
+      const response = await fetch('/api/mixes?type=personal');
+      const data = await response.json();
+      setMixes(data.mixes || []);
+    } catch (error) {
+      console.error('Error fetching mixes:', error);
+    } finally {
+      setIsLoading(false);
+    }
   }, [user]);
+
+  useEffect(() => {
+    fetchMixes();
+  }, [fetchMixes]);
 
   const resetForm = () => {
     setFormData({

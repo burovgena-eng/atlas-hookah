@@ -1,21 +1,23 @@
-// API авторизации
+// API авторизации: регистрация (POST), вход (PUT), выход (DELETE)
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import * as crypto from 'crypto';
-import { 
-  validateEmail, 
-  validatePassword, 
-  validateRequiredString, 
-  validatePhone, 
+import {
+  validateEmail,
+  validatePassword,
+  validateRequiredString,
+  validatePhone,
   validateRole,
   MAX_LENGTHS,
   isObject,
 } from '@/lib/validation';
+import { createSession, deleteSession, SAFE_USER_SELECT } from '@/lib/auth';
+import { rateLimitMiddleware } from '@/lib/rate-limit';
+import { logSecurityEvent } from '@/lib/security-logger';
 
-// Константа для количества итераций
+// Количество итераций PBKDF2
 const HASH_ITERATIONS = 10000;
 
-// Функция для хеширования пароля
 // Формат: iterations:salt:hash
 async function hashPassword(password: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -27,37 +29,43 @@ async function hashPassword(password: string): Promise<string> {
   });
 }
 
-// Функция для проверки пароля
-// Поддерживает старый формат (salt:hash) и новый (iterations:salt:hash)
+// Поддерживает старый формат (salt:hash, 1000 итераций) и новый (iterations:salt:hash)
 async function verifyPassword(password: string, hashedPassword: string): Promise<boolean> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const parts = hashedPassword.split(':');
-    
+
     let iterations: number;
     let salt: string;
     let hash: string;
-    
+
     if (parts.length === 2) {
-      // Старый формат: salt:hash (1000 итераций)
       iterations = 1000;
       [salt, hash] = parts;
     } else if (parts.length === 3) {
-      // Новый формат: iterations:salt:hash
       iterations = parseInt(parts[0], 10);
+      if (!Number.isFinite(iterations) || iterations <= 0) return resolve(false);
       [salt, hash] = [parts[1], parts[2]];
     } else {
       return resolve(false);
     }
-    
+
     crypto.pbkdf2(password, salt, iterations, 64, 'sha512', (err, derivedKey) => {
-      if (err) reject(err);
-      resolve(hash === derivedKey.toString('hex'));
+      if (err) return resolve(false);
+      // Timing-safe сравнение хешей
+      const a = Buffer.from(hash, 'hex');
+      const b = derivedKey;
+      resolve(a.length === b.length && crypto.timingSafeEqual(a, b));
     });
   });
 }
 
 // Регистрация
 export async function POST(request: NextRequest) {
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1';
+
+  const limited = rateLimitMiddleware(request, 'register', ip);
+  if (limited) return limited;
+
   try {
     let body;
     try {
@@ -68,7 +76,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    
+
     // Проверяем, что body это объект
     if (!isObject(body)) {
       return NextResponse.json(
@@ -76,7 +84,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    
+
     const { email, password, name, phone, role } = body;
 
     // Валидация email
@@ -108,7 +116,7 @@ export async function POST(request: NextRequest) {
 
     // Валидация телефона (если указан)
     const validatedPhone = validatePhone(phone);
-    
+
     // Валидация роли
     const validatedRole = validateRole(role);
 
@@ -129,7 +137,7 @@ export async function POST(request: NextRequest) {
 
     // Проверяем, есть ли уже утверждённый руководитель в системе
     const existingManager = await db.user.findFirst({
-      where: { 
+      where: {
         role: 'MANAGER',
         isApproved: true,
         deletedAt: null,
@@ -147,19 +155,11 @@ export async function POST(request: NextRequest) {
       if (!existingManager) {
         isApproved = true;
         isFirstManager = true;
-      } else {
-        // Все последующие руководители требуют подтверждения
-        isApproved = false;
       }
     } else if (validatedRole === 'ADMIN') {
       userRole = 'ADMIN';
-      isApproved = false;
     } else if (validatedRole === 'SENIOR_MASTER') {
       userRole = 'SENIOR_MASTER';
-      isApproved = false;
-    } else {
-      userRole = 'HOOKAH_MASTER';
-      isApproved = false;
     }
 
     // Создаем пользователя
@@ -174,10 +174,19 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    await logSecurityEvent('REGISTER', { userId: user.id, ip, details: { role: userRole } });
+
+    // Первый руководитель сразу получает сессию (клиент его автоматически логинит)
+    let token: string | undefined;
+    if (isFirstManager) {
+      token = (await createSession(user.id)).token;
+    }
+
     // Возвращаем пользователя без пароля
     const { password: _, ...userWithoutPassword } = user;
-    return NextResponse.json({ 
+    return NextResponse.json({
       user: userWithoutPassword,
+      token,
       isFirstManager,
       needsApproval: !isApproved,
     });
@@ -192,6 +201,14 @@ export async function POST(request: NextRequest) {
 
 // Вход
 export async function PUT(request: NextRequest) {
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1';
+
+  const limited = rateLimitMiddleware(request, 'auth', ip);
+  if (limited) {
+    await logSecurityEvent('LOGIN_BLOCKED', { ip, details: { reason: 'rate_limit' } });
+    return limited;
+  }
+
   try {
     let body;
     try {
@@ -202,7 +219,7 @@ export async function PUT(request: NextRequest) {
         { status: 400 }
       );
     }
-    
+
     // Проверяем, что body это объект
     if (!isObject(body)) {
       return NextResponse.json(
@@ -210,7 +227,7 @@ export async function PUT(request: NextRequest) {
         { status: 400 }
       );
     }
-    
+
     const { email, password } = body;
 
     // Валидация email
@@ -235,18 +252,12 @@ export async function PUT(request: NextRequest) {
       where: { email: validatedEmail },
     });
 
-    if (!user) {
+    // Единое сообщение об ошибке — не раскрываем, что именно неверно
+    if (!user || user.deletedAt) {
+      await logSecurityEvent('LOGIN_FAILED', { ip, details: { email: validatedEmail, reason: 'no_user' } });
       return NextResponse.json(
         { error: 'Неверный email или пароль' },
         { status: 401 }
-      );
-    }
-
-    // Проверяем, не был ли пользователь удалён (soft delete)
-    if (user.deletedAt) {
-      return NextResponse.json(
-        { error: 'Этот аккаунт был удалён' },
-        { status: 403 }
       );
     }
 
@@ -254,6 +265,7 @@ export async function PUT(request: NextRequest) {
     const passwordMatch = await verifyPassword(password, user.password);
 
     if (!passwordMatch) {
+      await logSecurityEvent('LOGIN_FAILED', { userId: user.id, ip, details: { reason: 'bad_password' } });
       return NextResponse.json(
         { error: 'Неверный email или пароль' },
         { status: 401 }
@@ -268,14 +280,31 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // Возвращаем пользователя без пароля
+    // Создаём серверную сессию
+    const { token } = await createSession(user.id);
+
+    await logSecurityEvent('LOGIN_SUCCESS', { userId: user.id, ip });
+
+    // Возвращаем пользователя без пароля + токен сессии
     const { password: _, ...userWithoutPassword } = user;
-    return NextResponse.json({ user: userWithoutPassword });
+    return NextResponse.json({ user: userWithoutPassword, token });
   } catch (error) {
     console.error('Login error:', error);
     return NextResponse.json(
       { error: 'Ошибка при входе' },
       { status: 500 }
     );
+  }
+}
+
+// Выход (инвалидация серверной сессии)
+export async function DELETE(request: NextRequest) {
+  try {
+    const token = request.headers.get('X-Session-Token');
+    await deleteSession(token);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Logout error:', error);
+    return NextResponse.json({ error: 'Ошибка при выходе' }, { status: 500 });
   }
 }

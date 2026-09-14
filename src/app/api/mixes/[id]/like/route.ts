@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
+import { validateId } from '@/lib/validation';
 
 // Поставить/убрать лайк
 export async function POST(
@@ -7,20 +9,25 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params;
-    const body = await request.json();
-    const { userId } = body;
-
-    if (!userId) {
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
+
+    const { id } = await params;
+    const mixId = validateId(id);
+
+    if (!mixId) {
+      return NextResponse.json({ error: 'Некорректный ID микса' }, { status: 400 });
     }
 
     // Проверяем, есть ли уже лайк
     const existingLike = await db.mixLike.findUnique({
       where: {
         mixId_userId: {
-          mixId: id,
-          userId,
+          mixId,
+          userId: user.id,
         },
       },
     });
@@ -35,8 +42,8 @@ export async function POST(
       // Ставим лайк
       await db.mixLike.create({
         data: {
-          mixId: id,
-          userId,
+          mixId,
+          userId: user.id,
         },
       });
       return NextResponse.json({ liked: true });

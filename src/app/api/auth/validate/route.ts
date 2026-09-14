@@ -1,82 +1,50 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-
-// Проверка валидности сессии пользователя
+// Проверка валидности сессии пользователя (по серверному токену сессии)
 // Используется для:
 // - Мгновенной деавторизации при удалении/блокировке
-// - Обновления данных пользователя (роль, имя и т.д.) при изменении руководителем
+// - Обновления данных пользователя (роль, имя, аватар) при изменении руководителем
+// Внимание: персональные данные (email, телефон, bio) намеренно не возвращаются —
+// маршрут доступен любому, у кого есть токен, и не должен использоваться для их получения.
+import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
+
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
-    const currentRole = searchParams.get('role'); // Текущая роль в сессии
-    const currentName = searchParams.get('name'); // Текущее имя в сессии
+    const user = await getAuthUser(request);
 
-    if (!userId) {
-      return NextResponse.json({ valid: false, reason: 'no_user_id' });
-    }
-
-    const user = await db.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        avatar: true,
-        role: true,
-        isApproved: true,
-        bio: true,
-        phone: true,
-        city: true,
-        branch: true,
-        deletedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-
-    // Пользователь не существует
+    // Нет валидной сессии
     if (!user) {
-      return NextResponse.json({ valid: false, reason: 'user_not_found' });
+      return NextResponse.json({ valid: false, reason: 'no_session' });
     }
 
-    // Пользователь был удалён (soft delete)
-    if (user.deletedAt) {
-      return NextResponse.json({ valid: false, reason: 'user_deleted' });
-    }
+    const { searchParams } = new URL(request.url);
+    const currentRole = searchParams.get('role');
+    const currentName = searchParams.get('name');
+    const currentAvatar = searchParams.get('avatar');
 
-    // Пользователь не подтверждён (заблокирован)
-    if (!user.isApproved) {
-      return NextResponse.json({ valid: false, reason: 'user_not_approved' });
-    }
+    const roleChanged = currentRole !== null && currentRole !== user.role;
+    const nameChanged = currentName !== null && currentName !== user.name;
+    const avatarChanged = currentAvatar !== null && currentAvatar !== (user.avatar || '');
 
-    // Проверяем, изменились ли данные пользователя
-    const roleChanged = currentRole && currentRole !== user.role;
-    const nameChanged = currentName && currentName !== user.name;
-
-    // Если данные изменились, возвращаем обновлённого пользователя
-    if (roleChanged || nameChanged) {
+    // Если данные изменились, возвращаем обновлённые публичные поля
+    // (email/телефон/bio не отдаваем — клиент хранит их в своей копии пользователя)
+    if (roleChanged || nameChanged || avatarChanged) {
       return NextResponse.json({
         valid: true,
         userUpdated: true,
         user: {
           id: user.id,
-          email: user.email,
           name: user.name,
           avatar: user.avatar,
           role: user.role,
           isApproved: user.isApproved,
-          bio: user.bio,
-          phone: user.phone,
           city: user.city,
           branch: user.branch,
-          deletedAt: user.deletedAt,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
         },
         changes: {
           roleChanged,
           nameChanged,
+          avatarChanged,
         },
       });
     }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
+import { CategoryVisibility } from '@prisma/client';
 import { 
   validateId, 
   validateRequiredString, 
@@ -7,7 +9,6 @@ import {
   validateUrl,
   validateVisibility,
   validateBoolean,
-  validateLimit,
   MAX_LENGTHS,
   isObject,
 } from '@/lib/validation';
@@ -17,11 +18,10 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const categoryId = validateId(searchParams.get('categoryId'));
-    const userId = validateId(searchParams.get('userId'));
     const search = validateString(searchParams.get('search'), MAX_LENGTHS.search);
 
-    // Получаем пользователя для проверки роли
-    const user = userId ? await db.user.findUnique({ where: { id: userId } }) : null;
+    // Роль берём из серверной сессии; без сессии видны только общие статьи
+    const user = await getAuthUser(request);
 
     const where: Record<string, unknown> = {};
 
@@ -30,11 +30,12 @@ export async function GET(request: NextRequest) {
       where.categoryId = categoryId;
     }
 
-    // Поиск по заголовку и содержанию (Prisma параметризует запросы - SQL injection не возможен)
+    // Поиск по заголовку и содержанию (Prisma параметризует запросы - SQL injection не возможен).
+    // Без mode: 'insensitive' — SQLite-коннектор его не поддерживает (LIKE в SQLite регистронезависим для ASCII).
     if (search) {
       where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { content: { contains: search, mode: 'insensitive' } },
+        { title: { contains: search } },
+        { content: { contains: search } },
       ];
     }
 
@@ -94,26 +95,25 @@ export async function POST(request: NextRequest) {
       content, 
       categoryId, 
       imageUrl, 
-      authorId, 
       visibility,
       sendNotification 
     } = body;
 
-    const validatedAuthorId = validateId(authorId);
-    const validatedTitle = validateRequiredString(title, MAX_LENGTHS.title);
-    const validatedContent = validateRequiredString(content, MAX_LENGTHS.content);
-    
-    if (!validatedAuthorId) {
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
+
+    const validatedTitle = validateRequiredString(title, MAX_LENGTHS.title);
+    const validatedContent = validateRequiredString(content, MAX_LENGTHS.content);
 
     if (!validatedTitle || !validatedContent) {
       return NextResponse.json({ error: 'Заголовок и содержание обязательны' }, { status: 400 });
     }
 
     // Проверяем права - только руководитель может создавать статьи
-    const user = await db.user.findUnique({ where: { id: validatedAuthorId } });
-    if (user?.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Только руководитель может создавать статьи' }, { status: 403 });
     }
 
@@ -123,8 +123,8 @@ export async function POST(request: NextRequest) {
         content: validatedContent,
         categoryId: validateId(categoryId),
         imageUrl: validateUrl(imageUrl),
-        authorId: validatedAuthorId,
-        visibility: validateVisibility(visibility) || 'COMMON',
+        authorId: actor.id,
+        visibility: (validateVisibility(visibility) as CategoryVisibility) || 'COMMON',
         isOfficial: true, // Все статьи от руководителей официальные
       },
       include: {
@@ -144,7 +144,7 @@ export async function POST(request: NextRequest) {
           type: 'KNOWLEDGE_ADDED',
           title: 'Новая статья в базе знаний',
           content: `Добавлена статья "${validatedTitle}"`,
-          authorId: validatedAuthorId,
+          authorId: actor.id,
           recipientId: null, // Всем
           knowledgeId: article.id,
           knowledgeTitle: article.title,
@@ -175,16 +175,21 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Некорректный формат данных' }, { status: 400 });
     }
     
-    const { id, title, content, categoryId, imageUrl, userId, visibility, sendNotification } = body;
+    const { id, title, content, categoryId, imageUrl, visibility, sendNotification } = body;
 
     const validatedId = validateId(id);
-    const validatedUserId = validateId(userId);
-    
-    if (!validatedId || !validatedUserId) {
-      return NextResponse.json({ error: 'ID статьи и пользователь обязательны' }, { status: 400 });
+
+    if (!validatedId) {
+      return NextResponse.json({ error: 'ID статьи обязателен' }, { status: 400 });
     }
 
-    // Проверяем права
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
+
+    // Проверяем существование статьи
     const existingArticle = await db.knowledge.findUnique({
       where: { id: validatedId },
     });
@@ -192,10 +197,8 @@ export async function PUT(request: NextRequest) {
     if (!existingArticle) {
       return NextResponse.json({ error: 'Статья не найдена' }, { status: 404 });
     }
-
     // Проверяем права на изменение
-    const user = await db.user.findUnique({ where: { id: validatedUserId } });
-    const canEdit = user?.role === 'MANAGER' || existingArticle.authorId === validatedUserId;
+    const canEdit = user.role === 'MANAGER' || existingArticle.authorId === user.id;
 
     if (!canEdit) {
       return NextResponse.json({ error: 'Нет прав на редактирование' }, { status: 403 });
@@ -212,8 +215,8 @@ export async function PUT(request: NextRequest) {
         content: validatedContent ?? existingArticle.content,
         categoryId: categoryId !== undefined ? validateId(categoryId) : existingArticle.categoryId,
         imageUrl: imageUrl !== undefined ? validateUrl(imageUrl) : existingArticle.imageUrl,
-        visibility: validateVisibility(visibility) ?? existingArticle.visibility,
-        isOfficial: user?.role === 'MANAGER',
+        visibility: (validateVisibility(visibility) as CategoryVisibility) ?? existingArticle.visibility,
+        isOfficial: user.role === 'MANAGER',
       },
       include: {
         author: {
@@ -226,13 +229,13 @@ export async function PUT(request: NextRequest) {
     });
 
     // Отправка уведомления если нужно
-    if (sendNotification && user?.role === 'MANAGER') {
+    if (sendNotification && user.role === 'MANAGER') {
       await db.notification.create({
         data: {
           type: 'KNOWLEDGE_UPDATED',
           title: 'Статья обновлена',
           content: `Обновлена статья "${article.title}"`,
-          authorId: validatedUserId,
+          authorId: user.id,
           recipientId: null, // Всем
           knowledgeId: article.id,
           knowledgeTitle: article.title,
@@ -254,30 +257,33 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const id = validateId(searchParams.get('id'));
-    const userId = validateId(searchParams.get('userId'));
 
     // Для уведомлений читаем тело запроса если есть
     let sendNotification = false;
-    let authorId = userId;
-    
+
     const contentLength = request.headers.get('content-length');
     if (contentLength && parseInt(contentLength) > 0) {
       try {
         const body = await request.json();
         if (isObject(body)) {
           sendNotification = validateBoolean(body.sendNotification);
-          authorId = validateId(body.authorId) || userId;
         }
       } catch {
         // Игнорируем ошибки парсинга тела
       }
     }
 
-    if (!id || !authorId) {
-      return NextResponse.json({ error: 'ID статьи и пользователь обязательны' }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: 'ID статьи обязателен' }, { status: 400 });
     }
 
-    // Проверяем права
+    // Актор только из серверной сессии
+    const user = await getAuthUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
+    }
+
+    // Проверяем существование
     const existingArticle = await db.knowledge.findUnique({
       where: { id },
       include: {
@@ -292,8 +298,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Только автор или руководитель может удалить
-    const user = await db.user.findUnique({ where: { id: authorId } });
-    if (existingArticle.authorId !== authorId && user?.role !== 'MANAGER') {
+    if (existingArticle.authorId !== user.id && user.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Нет прав на удаление' }, { status: 403 });
     }
 
@@ -307,13 +312,13 @@ export async function DELETE(request: NextRequest) {
     });
 
     // Отправка уведомления если нужно
-    if (sendNotification && user?.role === 'MANAGER') {
+    if (sendNotification && user.role === 'MANAGER') {
       await db.notification.create({
         data: {
           type: 'KNOWLEDGE_DELETED',
           title: 'Статья удалена',
           content: `Удалена статья "${articleTitle}"`,
-          authorId,
+          authorId: user.id,
           recipientId: null, // Всем
           categoryId: categoryId,
           categoryName: categoryName,

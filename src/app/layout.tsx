@@ -15,9 +15,17 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Atlas Hookah - Система управления кальянной сетью",
-  description: "Платформа для кальянных мастеров сети Atlas. Управление миксами, база знаний, заметки по клиентам.",
+  description:
+    "Платформа для кальянных мастеров сети Atlas. Управление миксами, база знаний, заметки по клиентам.",
   keywords: ["Atlas", "Hookah", "Кальян", "Кальянная", "Миксы"],
   authors: [{ name: "Atlas Team" }],
+  openGraph: {
+    title: "Atlas Hookah",
+    description:
+      "Система управления кальянной сетью: миксы, рецептуры, CRM клиентов, база знаний и инвентаризация.",
+    type: "website",
+    locale: "ru_RU",
+  },
 };
 
 export default function RootLayout({
@@ -26,7 +34,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="ru" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >

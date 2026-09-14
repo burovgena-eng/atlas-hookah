@@ -1,13 +1,9 @@
-// Atlas Hookah - Next.js Config v3
+// Atlas Hookah - Next.js Config
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  /* config options here */
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  reactStrictMode: false,
+  reactStrictMode: true,
 };
 
 export default nextConfig;

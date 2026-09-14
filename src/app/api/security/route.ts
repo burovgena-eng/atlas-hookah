@@ -1,6 +1,7 @@
 // API для управления безопасностью (только для руководителей)
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
 import {
   createBackup,
   listBackups,
@@ -9,35 +10,32 @@ import {
   getBackupStats,
   formatFileSize,
 } from '@/lib/backup';
-import { getSecurityLogs, getSecurityStats } from '@/lib/security-logger';
+import { getSecurityLogs, getSecurityStats, type SecurityEventType, type SecurityLogEntry } from '@/lib/security-logger';
 import { getOrCreateCsrfToken } from '@/lib/csrf';
+import { validateLimit } from '@/lib/validation';
 
 // Получение информации о безопасности
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
-    const action = searchParams.get('action'); // 'logs', 'stats', 'backups', 'csrf'
-
-    if (!userId) {
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
-    // Проверяем права
-    const user = await db.user.findUnique({
-      where: { id: userId, deletedAt: null },
-    });
-
-    if (!user || user.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Доступ запрещён' }, { status: 403 });
     }
+
+    const { searchParams } = new URL(request.url);
+    const action = searchParams.get('action'); // 'logs', 'stats', 'backups', 'csrf'
 
     switch (action) {
       case 'logs': {
         const date = searchParams.get('date') || undefined;
-        const type = searchParams.get('type') as string | undefined;
-        const severity = searchParams.get('severity') as string | undefined;
-        const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 100;
+        const type = searchParams.get('type') as SecurityEventType | undefined;
+        const severity = searchParams.get('severity') as SecurityLogEntry['severity'] | undefined;
+        const limit = validateLimit(searchParams.get('limit'), 100, 500);
 
         const logs = await getSecurityLogs({ date, type, severity, limit });
         return NextResponse.json({ logs });
@@ -74,7 +72,7 @@ export async function GET(request: NextRequest) {
       }
 
       case 'csrf': {
-        const token = getOrCreateCsrfToken(userId);
+        const token = getOrCreateCsrfToken(actor.id);
         return NextResponse.json({ csrfToken: token });
       }
 
@@ -90,19 +88,22 @@ export async function GET(request: NextRequest) {
 // Создание бэкапа
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { userId, action, description } = body;
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Некорректный формат запроса' }, { status: 400 });
+    }
 
-    if (!userId) {
+    const { action, description } = body || {};
+
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
-    // Проверяем права
-    const user = await db.user.findUnique({
-      where: { id: userId, deletedAt: null },
-    });
-
-    if (!user || user.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Доступ запрещён' }, { status: 403 });
     }
 
@@ -133,19 +134,22 @@ export async function POST(request: NextRequest) {
 // Восстановление из бэкапа
 export async function PUT(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { userId, action, filename } = body;
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Некорректный формат запроса' }, { status: 400 });
+    }
 
-    if (!userId) {
+    const { action, filename } = body || {};
+
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
-    // Проверяем права
-    const user = await db.user.findUnique({
-      where: { id: userId, deletedAt: null },
-    });
-
-    if (!user || user.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Доступ запрещён' }, { status: 403 });
     }
 
@@ -180,19 +184,15 @@ export async function PUT(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
     const filename = searchParams.get('filename');
 
-    if (!userId) {
+    // Актор только из серверной сессии
+    const actor = await getAuthUser(request);
+    if (!actor) {
       return NextResponse.json({ error: 'Требуется авторизация' }, { status: 401 });
     }
 
-    // Проверяем права
-    const user = await db.user.findUnique({
-      where: { id: userId, deletedAt: null },
-    });
-
-    if (!user || user.role !== 'MANAGER') {
+    if (actor.role !== 'MANAGER') {
       return NextResponse.json({ error: 'Доступ запрещён' }, { status: 403 });
     }
 
