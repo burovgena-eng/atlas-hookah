@@ -1,0 +1,219 @@
+// Локальная версия для SQLite (разработка)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// Роли пользователей
+enum Role {
+  HOOKAH_MASTER   // Кальянный мастер
+  SENIOR_MASTER   // Старший кальянный мастер
+  MANAGER         // Руководитель
+}
+
+// Типы уведомлений
+enum NotificationType {
+  SYSTEM          // Системное уведомление
+  RECIPE_ADDED    // Добавлен новый рецепт
+  RECIPE_UPDATED  // Рецепт обновлен
+  RECIPE_DELETED  // Рецепт удален
+  MESSAGE         // Сообщение от руководителя
+  ANNOUNCEMENT    // Объявление всем
+}
+
+// Пользователи системы
+model User {
+  id            String       @id @default(cuid())
+  email         String       @unique
+  password      String
+  name          String
+  avatar        String?
+  role          Role         @default(HOOKAH_MASTER)
+  isApproved    Boolean      @default(false) // Подтвержден руководителем
+  bio           String?
+  phone         String?
+  city          String?      // Город (Новосибирск, Красноярск)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  
+  // Отношения
+  personalMixes    Mix[]        @relation("PersonalMixes")
+  publicMixes      Mix[]        @relation("PublicMixes")
+  clientNotes      ClientNote[]
+  knowledge        Knowledge[]
+  recipes          Recipe[]     @relation("RecipeAuthor")
+  likedMixes       MixLike[]
+  comments         MixComment[]
+  sentNotifications  Notification[] @relation("SentNotifications")
+  receivedNotifications NotificationRead[]
+}
+
+// Уведомления
+model Notification {
+  id          String           @id @default(cuid())
+  type        NotificationType
+  title       String
+  content     String
+  authorId    String           // Кто отправил (руководитель или система)
+  recipientId String?          // null = всем, или конкретный пользователь
+  recipeId    String?          // Связанный рецепт (если есть)
+  recipeName  String?          // Название рецепта (для отображения)
+  isRead      Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  
+  author      User             @relation("SentNotifications", fields: [authorId], references: [id], onDelete: Cascade)
+  reads       NotificationRead[]
+  
+  @@index([recipientId])
+  @@index([authorId])
+  @@index([createdAt])
+}
+
+// Прочитанные уведомления (для отслеживания кто прочитал)
+model NotificationRead {
+  id             String       @id @default(cuid())
+  notificationId String
+  userId         String
+  readAt         DateTime     @default(now())
+  
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([notificationId, userId])
+}
+
+// Миксы табака
+model Mix {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  isPublic    Boolean     @default(false)
+  authorId    String
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  // Отношения
+  author      User        @relation("PublicMixes", fields: [authorId], references: [id], onDelete: Cascade)
+  personalAuthor User?    @relation("PersonalMixes", fields: [authorId], references: [id], onDelete: Cascade)
+  ingredients MixIngredient[]
+  likes       MixLike[]
+  comments    MixComment[]
+  
+  @@index([isPublic])
+  @@index([authorId])
+}
+
+// Ингредиенты микса (табаки)
+model MixIngredient {
+  id        String   @id @default(cuid())
+  mixId     String
+  tobacco   String   // Название табака
+  brand     String?  // Бренд (Al Fakher, Dark Side и т.д.)
+  amount    String?  // Количество (например, "50%", "1/3")
+  layer     String?  // Слой или сектор (например, "Нижний слой", "Сектор 1", "Верхний слой")
+  mix       Mix      @relation(fields: [mixId], references: [id], onDelete: Cascade)
+  
+  @@index([mixId])
+}
+
+// Лайки миксов
+model MixLike {
+  id     String   @id @default(cuid())
+  mixId  String
+  userId String
+  mix    Mix      @relation(fields: [mixId], references: [id], onDelete: Cascade)
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([mixId, userId])
+}
+
+// Комментарии к миксам
+model MixComment {
+  id        String   @id @default(cuid())
+  mixId     String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+  mix       Mix      @relation(fields: [mixId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([mixId])
+}
+
+// Заметки по постоянным клиентам
+model ClientNote {
+  id              String   @id @default(cuid())
+  masterId        String
+  clientName      String
+  clientPhone     String?
+  preferences     String?  // Предпочтения клиента
+  personalNotes   String?  // Личные заметки мастера (только для автора)
+  publicNotes     String   // Общие заметки (видны всем мастерам)
+  favoriteMix     String?  // Любимый микс
+  isPublic        Boolean  @default(true) // Показывать другим мастерам
+  visitCount      Int      @default(0)
+  lastVisit       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  master          User     @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  
+  @@index([masterId])
+  @@index([isPublic])
+}
+
+// База знаний
+model Knowledge {
+  id          String   @id @default(cuid())
+  title       String
+  content     String
+  category    String?  // Категория (техника, табаки, угли и т.д.)
+  imageUrl    String?  // Изображение статьи
+  authorId    String
+  isOfficial  Boolean  @default(false) // Официальная статья от руководства
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  author      User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  
+  @@index([category])
+  @@index([isOfficial])
+}
+
+// Рецептуры от руководителя
+model Recipe {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  instructions    String   // Пошаговая инструкция
+  bowlType        String?  // Тип чаши
+  preparationTime String?  // Время приготовления
+  tips            String?  // Советы
+  imageUrl        String?  // Изображение рецепта
+  authorId        String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  author          User              @relation("RecipeAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  ingredients     RecipeIngredient[]
+  
+  @@index([authorId])
+}
+
+// Ингредиенты рецепта (табаки)
+model RecipeIngredient {
+  id        String   @id @default(cuid())
+  recipeId  String
+  tobacco   String   // Название табака
+  brand     String?  // Бренд (Al Fakher, Dark Side и т.д.)
+  amount    String?  // Количество (например, "50%", "1/3")
+  layer     String?  // Слой или сектор (например, "Нижний слой", "Сектор 1", "Верхний слой")
+  recipe    Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  
+  @@index([recipeId])
+}
