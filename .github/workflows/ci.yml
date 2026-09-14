@@ -34,11 +34,14 @@ jobs:
           cp -r public .next/standalone/ 2>/dev/null || true
           cp -r .next/static .next/standalone/.next/static
           cp -r prisma .next/standalone/prisma
+          # Prisma резолвит file:./dev.db относительно schema dir — создаём БД
+          # и в корне репо, и в standalone (покрывает все варианты резолюции)
+          cd .next/standalone && bunx prisma db push && cd ../..
           cd .next/standalone
           PORT=3999 node server.js &
           sleep 5
           curl -sf http://localhost:3999/api | grep -q '"database":"up"'
-          curl -sf -X POST http://localhost:3999/api/seed | grep -q 'success\|созданы\|существуют'
+          curl -sf -X POST http://localhost:3999/api/seed | grep -q 'созданы\|существуют'
           curl -sf -X PUT http://localhost:3999/api/auth \
             -H "Content-Type: application/json" \
             -d '{"email":"manager@atlas.com","password":"123456"}' \
