@@ -22,7 +22,7 @@ jobs:
         run: bun install
 
       - name: Lint
-        run: bun run lint --if-present
+        run: bun run lint
 
       - name: Build (Turbopack + TypeScript strict)
         run: bun run build
