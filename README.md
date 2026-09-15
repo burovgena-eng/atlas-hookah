@@ -9,6 +9,14 @@
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss)
 ![License](https://img.shields.io/badge/license-all_rights_reserved-red)
 
+## 🚀 Live demo
+
+[![Live Demo](https://img.shields.io/badge/LIVE_DEMO-atlas--hookah.vercel.app-00C853?style=for-the-badge&logo=vercel&logoColor=white)](https://atlas-hookah.vercel.app)
+
+Демо развёрнуто на Vercel (Next.js 16 + Neon Postgres). База наполнена вымышленными данными.
+
+**Демо-доступ:** `manager@atlas.com` / `123456` — руководитель · `master@atlas.com` / `123456` — мастер
+
 ## ✨ Возможности
 
 | Модуль | Что умеет |
