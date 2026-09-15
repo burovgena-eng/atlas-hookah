@@ -4,7 +4,7 @@
   "buildCommand": "cp prisma/schema.postgres.prisma prisma/schema.prisma && prisma generate && next build",
   "installCommand": "bun install",
   "regions": [
-    "hel1"
+    "iad1"
   ],
   "functions": {
     "src/app/api/**/*.ts": {
