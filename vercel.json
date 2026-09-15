@@ -1,9 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "cp prisma/schema.postgres.prisma prisma/schema.prisma && prisma generate && prisma migrate deploy && next build",
+  "buildCommand": "cp prisma/schema.postgres.prisma prisma/schema.prisma && prisma generate && next build",
   "installCommand": "bun install",
-  "regions": ["hel1"],
+  "regions": [
+    "hel1"
+  ],
   "functions": {
     "src/app/api/**/*.ts": {
       "memory": 1024,
